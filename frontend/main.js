@@ -360,6 +360,7 @@ function hurt(amount) {
   player.hp = Math.max(0, player.hp - amount);
   $("hurt").style.opacity = 1; clearTimeout(hurt.t); hurt.t = setTimeout(() => ($("hurt").style.opacity = 0), 180);
   const now = performance.now(); if (now - player.lastHurt > 600) { sfx.hurt(); player.lastHurt = now; }
+  if (player.hp < 30 && !hurt.warned) { hurt.warned = true; taunt("Low health! Buy a med kit at the ATM or run."); }
   if (player.hp <= 0) finish("dead");
 }
 const keys = {};
@@ -412,7 +413,7 @@ function nearby() {
   const p = camera.position, r = roomAt(p.x, p.z);
   if (currentFloor === 0 && atmMesh && Math.hypot(atmMesh.position.x - p.x, atmMesh.position.z - p.z) < 1.8) return { kind: "atm" };
   const ex = roomById(run.exit_room);
-  if (currentFloor === 0 && r?.id === ex.id && p.z - ex.z < 1.6 && Math.abs(p.x - (ex.x + L.room_w / 2)) < 1.5) return { kind: "exit" };
+  if (currentFloor === 0 && r?.id === ex.id && p.z - ex.z < 2.2 && Math.abs(p.x - (ex.x + L.room_w / 2)) < 2.2) return { kind: "exit" };
   if (r?.name === "Stairwell") return { kind: "stairs" };
   return null;
 }
@@ -446,9 +447,13 @@ function pickupTick() {
       if (player.collected >= run.items.length) {
         taunt("All objects taken. RUN to the exit!");
         floorGroups[0].remove(exitSign);
-        exitSign = label("EXIT · open", { color: "#7cf3c4" });
+        exitSign = label("EXIT · walk out to escape", { color: "#7cf3c4", size: 64 });
         const ex = roomById(run.exit_room); exitSign.position.set(ex.x + L.room_w / 2, 2.85, ex.z + 0.3);
         floorGroups[0].add(exitSign);
+        const beam = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.1, 3.4, 24, 1, true),
+          new THREE.MeshBasicMaterial({ color: 0x7cf3c4, transparent: true, opacity: 0.18, side: THREE.DoubleSide, depthWrite: false }));
+        beam.position.set(ex.x + L.room_w / 2, 1.7, ex.z + 1.0); floorGroups[0].add(beam);
+        const gl = new THREE.PointLight(0x7cf3c4, 8, 10, 1.3); gl.position.set(ex.x + L.room_w / 2, 2.2, ex.z + 1.2); floorGroups[0].add(gl);
       }
       api(`/api/runs/${run.id}/collect`, { item_id: id, since }).catch(() => {});
     }
@@ -563,11 +568,12 @@ function hudTick() {
   const t = nearby(), p = $("prompt");
   p.classList.toggle("hidden", !t);
   if (t?.kind === "atm") p.textContent = "E · Capital One ATM (buy upgrades)";
-  if (t?.kind === "exit") p.textContent = player.collected >= run.items.length ? "E · ESCAPE" : "E · exit (locked)";
+  if (t?.kind === "exit") p.textContent = player.collected >= run.items.length ? "ESCAPING…" : `Exit locked · ${run.items.length - player.collected} objects left`;
   if (t?.kind === "stairs") {
     const up = currentFloor + 1 < L.floors, down = currentFloor > 0;
     p.textContent = [up && `E · go up to floor ${currentFloor + 2}`, down && `Q · go down to floor ${currentFloor}`].filter(Boolean).join("   ");
   }
+  if (t?.kind === "exit" && player.collected >= run.items.length) finish("escaped");   // walk out to win
   if (tl <= 0) finish("dawn");
 }
 function drawMinimap() {
@@ -588,6 +594,11 @@ function drawMinimap() {
   for (const m of Object.values(itemMeshes)) if (m.userData.floor === currentFloor) dot(m.position.x, m.position.z, "#c58cff");
   for (const g of ghosts.values()) if (g.floor === currentFloor && !g.dying) dot(g.mesh.position.x, g.mesh.position.z, "#ff4d6d", g.kind === "banshee" ? 5 : 3.5);
   if (currentFloor === 0 && atmMesh) dot(atmMesh.position.x, atmMesh.position.z, "#3d8bff");
+  if (currentFloor === 0) {
+    const ex = roomById(run.exit_room), open = player.collected >= run.items.length;
+    ctx.fillStyle = open ? "#7cf3c4" : "#ff8095"; ctx.font = "bold 10px Inter, sans-serif"; ctx.textAlign = "center";
+    ctx.fillText(open ? "EXIT ✓" : "EXIT", tx(ex.x + L.room_w / 2), tz(ex.z) + 11); ctx.textAlign = "start";
+  }
   const p = camera.position, d = new THREE.Vector3(); camera.getWorldDirection(d);
   dot(p.x, p.z, "#7cf3c4", 4);
   ctx.strokeStyle = "#7cf3c4"; ctx.beginPath(); ctx.moveTo(tx(p.x), tz(p.z)); ctx.lineTo(tx(p.x + d.x * 3), tz(p.z + d.z * 3)); ctx.stroke();

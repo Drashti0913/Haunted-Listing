@@ -195,10 +195,12 @@ async def finish(rid: str, req: Act):
     if run.status == "playing":
         run.status = req.result if req.result in ("escaped", "dead", "dawn") else "dead"
         s = req.stats
+        got = s.get("collected", 0)
         lines = {
             "escaped": f"You walked out with all {len(run.items)} cursed objects.",
-            "dead": "The building kept you. Your flashlight is still rolling on the floor.",
-            "dawn": "Dawn came. You never found the way out.",
+            "dead": f"The ghosts drained your health with {got}/{len(run.items)} objects in hand. "
+                    "Tip: hold your UV beam on ghosts to capture them, and buy a med kit at the ATM.",
+            "dawn": f"Dawn came with {got}/{len(run.items)} objects collected.",
         }
         run.epilogue = (f"{lines[run.status]} Ghosts captured: {s.get('captures', 0)}. "
                         f"Bounty earned: ${run.wallet['earned'] / 100:,.2f}.")
