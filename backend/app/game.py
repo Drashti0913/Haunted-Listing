@@ -1,171 +1,199 @@
-"""Game state, what the player is allowed to see, and an offline game master
-used when no ANTHROPIC_API_KEY is set (so the demo never breaks)."""
-import logging
+"""Night Shift: a real-time ghost hunt inside a real building.
+
+The browser runs the action (movement, ghosts chasing, the UV beam). The server
+holds the run, pays bounties through Capital One Nessie, and streams commands
+from the AI Director (deepagents) or, without an API key, the rule-based director."""
 import random
-import re
+import time
 import uuid
 
-from . import nessie
 from .layout import build_layout, room_by_id
 
-log = logging.getLogger("game")
+GHOSTS = {   # hp, speed (m/s), damage per second, bounty in cents
+    "wisp":        {"hp": 30,  "speed": 2.6, "dps": 8,  "bounty": 2500,  "label": "Wisp"},
+    "poltergeist": {"hp": 70,  "speed": 2.1, "dps": 14, "bounty": 6000,  "label": "Poltergeist"},
+    "banshee":     {"hp": 220, "speed": 1.8, "dps": 26, "bounty": 25000, "label": "Banshee"},
+}
+SHOP = {     # item -> price in cents, what it does (applied in the browser)
+    "battery": {"price": 4000,  "name": "Extended battery", "desc": "+60% beam battery"},
+    "medkit":  {"price": 3000,  "name": "Med kit",          "desc": "Heal to full"},
+    "boots":   {"price": 6000,  "name": "Sprint boots",     "desc": "+30% move speed"},
+    "lance":   {"price": 12000, "name": "UV lance",         "desc": "Double beam damage"},
+}
+ITEMS = {
+    "office": ["Cracked trading ledger", "Stopped pocket watch", "Bloodstained memo", "Ticker tape reel",
+               "Brass desk key", "Founder's portrait"],
+    "multifamily": ["Rusted mailbox key", "Child's music box", "Torn eviction notice", "Hollywood headshot",
+                    "Cold teacup", "Locket with no photo"],
+    "retail": ["Haunted bowling pin", "Glitching arcade token", "Pawned wedding ring", "Fortune cookie (unopened)",
+               "Prize ticket roll", "Neon sign letter"],
+}
+N_ITEMS = 5
+TIME_LIMIT = 300
 
 
-class Game:
+class Run:
     def __init__(self, building: dict):
         self.id = uuid.uuid4().hex[:10]
         self.building = building
         self.layout = build_layout(building)
         self.title = ""
         self.intro = ""
-        self.mystery = ""
-        self.solution = ""
-        self.culprit_id: str | None = None
-        self.npcs: dict[str, dict] = {}
-        self.clues: dict[str, dict] = {}
-        self.events: list[dict] = []
-        self.status = "playing"          # playing | won | lost
-        self.hints_used = 0
-        # Capital One Nessie money trail
-        self.bank_enabled = nessie.enabled()
-        self.merchants: dict[str, dict] = {}
-        self.bank_viewed = False
-        offices = [r for r in self.layout["rooms"]
-                   if re.search(r"Office|Manager|Archive", r["name"])]
-        self.bank_room = (offices or self.layout["rooms"])[0]["id"]
+        self.taunts: list[str] = []
+        self.items: dict[str, dict] = {}
+        self.ghosts: dict[str, dict] = {}
+        self.commands: list[dict] = []
+        self.status = "playing"
+        self.started = time.time()
+        rooms = self.layout["rooms"]
+        self.exit_room = next(r["id"] for r in rooms if r["floor"] == 0)
+        self.atm_room = self.exit_room
+        # director bookkeeping
+        self.snapshot: dict = {}
+        self.director_busy = False
+        self.last_director = 0.0
+        self.director_log: list[str] = []
+        self.director_mode = "rules"
+        # wallet (Capital One Nessie when configured, else local)
+        self.wallet = {"live": False, "earned": 0, "spent": 0, "balance": 0,
+                       "player_account": None, "bank_account": None, "merchant": None, "last_tx": None}
+        self.epilogue = ""
 
-    # --- mutations used by both the agent tools and the offline GM -------
-    def emit(self, kind: str, **data):
-        self.events.append({"seq": len(self.events), "kind": kind, **data})
+    # ---------------------------------------------------------------- commands
+    def cmd(self, kind: str, **data):
+        c = {"seq": len(self.commands), "kind": kind, **data}
+        self.commands.append(c)
+        return c
 
-    def spawn_npc(self, name, role, room_id, persona, secret, alibi):
+    def spawn_ghost(self, room_id: str, kind: str = "wisp") -> str:
+        if kind not in GHOSTS:
+            return f"Unknown ghost kind {kind}; use one of {list(GHOSTS)}"
         if not room_by_id(self.layout, room_id):
             return f"Unknown room {room_id}"
-        nid = f"npc{len(self.npcs) + 1}"
-        self.npcs[nid] = {"id": nid, "name": name, "role": role, "room": room_id,
-                          "persona": persona, "secret": secret, "alibi": alibi}
-        return f"Spawned {name} as {nid} in {room_id}"
+        alive = sum(g["alive"] for g in self.ghosts.values())
+        if alive >= 9:
+            return "Too many ghosts alive (max 9). Use send_ghost instead."
+        if kind == "banshee" and any(g["alive"] and g["kind"] == "banshee" for g in self.ghosts.values()):
+            return "A banshee is already loose."
+        gid = f"g{len(self.ghosts) + 1}"
+        self.ghosts[gid] = {"id": gid, "kind": kind, "room": room_id, "alive": True}
+        self.cmd("spawn", ghost={"id": gid, "kind": kind, "room": room_id, **GHOSTS[kind]})
+        return f"Spawned {kind} {gid} in {room_id}"
 
-    def place_clue(self, room_id, name, description, points_to=""):
-        if not room_by_id(self.layout, room_id):
-            return f"Unknown room {room_id}"
-        cid = f"clue{len(self.clues) + 1}"
-        self.clues[cid] = {"id": cid, "room": room_id, "name": name,
-                           "description": description, "points_to": points_to,
-                           "found": False}
-        return f"Placed {name} as {cid} in {room_id}"
+    def send_ghost(self, ghost_id: str, room_id: str) -> str:
+        g = self.ghosts.get(ghost_id)
+        if not g or not g["alive"] or not room_by_id(self.layout, room_id):
+            return "Invalid ghost or room"
+        g["room"] = room_id
+        self.cmd("send", ghost_id=ghost_id, room=room_id)
+        return f"{ghost_id} now hunting toward {room_id}"
 
-    def move_npc(self, npc_id, room_id):
-        if npc_id not in self.npcs or not room_by_id(self.layout, room_id):
-            return "Invalid npc or room"
-        self.npcs[npc_id]["room"] = room_id
-        self.emit("move", npc_id=npc_id, room=room_id)
-        return f"Moved {npc_id} to {room_id}"
+    def flicker(self, floor: int, seconds: float = 4) -> str:
+        self.cmd("flicker", floor=int(floor), seconds=max(1.0, min(float(seconds), 8.0)))
+        return f"Lights out on floor {floor}"
+
+    def taunt(self, text: str) -> str:
+        self.cmd("taunt", text=text[:140])
+        return "Taunted"
+
+    def haunt_item(self, item_id: str, room_id: str) -> str:
+        it = self.items.get(item_id)
+        if not it or it["collected"] or not room_by_id(self.layout, room_id):
+            return "Invalid item or room"
+        it["room"] = room_id
+        self.cmd("move_item", item_id=item_id, room=room_id)
+        return f"{it['name']} vanished and reappeared in {room_id}"
+
+    def place_item(self, room_id: str, name: str, lore: str) -> str:
+        if not room_by_id(self.layout, room_id) or len(self.items) >= N_ITEMS:
+            return "Invalid room or already 5 items"
+        iid = f"i{len(self.items) + 1}"
+        self.items[iid] = {"id": iid, "room": room_id, "name": name, "lore": lore, "collected": False}
+        return f"Placed {iid}"
 
     def ready(self) -> list[str]:
-        problems = []
+        p = []
         if not self.title:
-            problems.append("set_story not called")
-        if len(self.npcs) < 3:
-            problems.append("need at least 3 suspects")
-        if len(self.clues) < 4:
-            problems.append("need at least 4 clues")
-        if self.culprit_id not in self.npcs:
-            problems.append("culprit must be one of the spawned suspects")
-        return problems
+            p.append("call set_lore")
+        if len(self.items) != N_ITEMS:
+            p.append(f"place exactly {N_ITEMS} items (have {len(self.items)})")
+        if not self.ghosts:
+            p.append("spawn at least one ghost")
+        return p
 
-    # --- what the browser gets (no culprit, no secrets) ------------------
     def public(self, since: int = 0) -> dict:
         b = self.building
         return {
-            "id": self.id, "status": self.status, "title": self.title,
-            "intro": self.intro, "mystery": self.mystery,
+            "id": self.id, "status": self.status, "title": self.title, "intro": self.intro,
             "building": {k: b.get(k) for k in ("id", "name", "address", "city", "lat", "lng",
-                                                "property_type", "year_built", "floors",
-                                                "tenants", "history")},
-            "layout": self.layout,
-            "npcs": [{k: n[k] for k in ("id", "name", "role", "room")} for n in self.npcs.values()],
-            "clues": [{"id": c["id"], "room": c["room"], "name": c["name"], "found": c["found"],
-                       "description": c["description"] if c["found"] else None}
-                      for c in self.clues.values()],
-            "events": self.events[since:],
-            "bank": {"enabled": self.bank_enabled, "room": self.bank_room},
-            "solution": self.solution if self.status != "playing" else None,
+                                                "property_type", "year_built", "floors", "history")},
+            "layout": self.layout, "exit_room": self.exit_room, "atm_room": self.atm_room,
+            "time_limit": TIME_LIMIT, "ghost_types": GHOSTS, "shop": SHOP,
+            "items": list(self.items.values()),
+            "commands": self.commands[since:],
+            "wallet": self.wallet_view(),
+            "director": {"mode": self.director_mode, "busy": self.director_busy,
+                         "last": self.director_log[-1] if self.director_log else ""},
+            "epilogue": self.epilogue,
         }
 
-
-# ---------------------------------------------------------------------------
-# Offline game master (deterministic, no LLM)
-# ---------------------------------------------------------------------------
-NAMES = ["Marisol Vega", "Desmond Okafor", "Priya Raman", "Walt Brennan", "June Takahashi"]
-ROLES = {"office": ["night security guard", "junior analyst", "building engineer", "senior partner"],
-         "multifamily": ["building manager", "tenant in 2A", "handyman", "landlord's nephew"],
-         "retail": ["arcade owner", "noodle chef", "pawn broker", "developer's agent"]}
+    def wallet_view(self) -> dict:
+        w = self.wallet
+        return {"live": w["live"], "earned": w["earned"], "spent": w["spent"],
+                "balance": w["balance"], "last_tx": w["last_tx"]}
 
 
-def offline_setup(game: Game):
-    b, rooms = game.building, [r for r in game.layout["rooms"] if r["name"] != "Stairwell"]
-    rnd = random.Random(b["id"])
+# --------------------------------------------------------------------------- offline setup
+def offline_setup(run: Run):
+    b = run.building
+    rnd = random.Random(b["id"] + run.id)
     year = b.get("year_built") or 1970
-    history = b.get("history") or ["It has stood here for decades"]
-    roles = ROLES.get(b.get("property_type"), ROLES["office"])
-    game.title = f"The Ghost of {b['name'].split('(')[0].strip()}"
-    game.intro = (f"Built in {year}. {history[0]}. Tonight the lights flicker on every floor "
-                  f"and a voice in the walls says it was cheated out of this building.")
-    game.mystery = "Someone has been staging the haunting to scare buyers away. Find out who."
-    picks = rnd.sample(rooms, k=min(len(rooms), 7))
-    for i in range(3):
-        game.spawn_npc(NAMES[i], roles[i], picks[i]["id"],
-                       persona=f"Nervous {roles[i]} who has worked here for years.",
-                       secret="Knows about the hidden sale documents." if i == 1 else "Owes money to the owner.",
-                       alibi=f"Says they were in the {picks[(i + 1) % 3]['name']} all night.")
-    culprit = "npc2"
-    game.culprit_id = culprit
-    c_name = game.npcs[culprit]["name"]
-    game.place_clue(picks[3]["id"], "Fog machine remote", "A cheap remote, still warm. Initials on the back match a staff badge.", culprit)
-    game.place_clue(picks[4]["id"], f"{year} blueprint", f"Original {year} plans show a crawlspace behind this wall: perfect for a hidden speaker.", culprit)
-    game.place_clue(picks[5 % len(picks)]["id"], "Sale contract draft", f"A draft offer for the building. Whoever scares off the buyers gets it cheap. Signed: {c_name}.", culprit)
-    game.place_clue(picks[6 % len(picks)]["id"], "Torn ghost costume", "A white sheet with a staff lanyard caught in the seam.", culprit)
-    game.solution = f"{c_name} faked the haunting to drive the price down before buying the building."
-    if game.bank_enabled:
-        offline_money_trail(game)
-    game.emit("narrate", text=game.intro)
+    history = b.get("history") or ["Nobody remembers who built it"]
+    name = b["name"].split("(")[0].strip()
+    run.title = f"Night Shift at {name}"
+    run.intro = (f"Built in {year}. {history[0]}. {history[-1]}. Since then, the night crew stopped "
+                 f"coming back. Collect the {N_ITEMS} cursed objects and get out before dawn.")
+    run.taunts = [f"This building was mine in {year}.", "You can't sell what belongs to the dead.",
+                  "The lights are mine.", f"{history[0]}... and you walked right in.",
+                  "Every floor remembers.", "Run faster."]
+    rooms = [r for r in run.layout["rooms"] if r["name"] != "Stairwell" and r["id"] != run.exit_room]
+    rnd.shuffle(rooms)
+    rooms.sort(key=lambda r: -r["floor"])            # hide the best stuff upstairs
+    names = ITEMS.get(b.get("property_type"), ITEMS["office"])
+    for i in range(N_ITEMS):
+        r = rooms[i % len(rooms)]
+        run.place_item(r["id"], names[i], f"It hums when you touch it. Floor {r['floor'] + 1}, {r['name']}.")
+    for f in range(run.layout["floors"]):
+        cand = [r for r in run.layout["rooms"] if r["floor"] == f and r["id"] != run.exit_room]
+        run.spawn_ghost(rnd.choice(cand)["id"], "wisp")
 
 
-def offline_money_trail(game: Game):
-    """Real Nessie purchases/transfers for the offline GM's mystery."""
-    trail = [
-        ("npc1", 6.50, "Late-night coffee", "Night Owl Coffee", "food", ""),
-        ("npc1", 42.99, "Six white bedsheets", "Ace Hardware", "home", ""),     # red herring
-        ("npc2", 389.00, "Fog machine + remote, rush delivery", "Spectral FX Supply", "entertainment", ""),
-        ("npc2", 129.00, "Wireless hidden speaker", "Circuit Shack", "electronics", ""),
-        ("npc2", 25000.00, "Earnest money deposit for the building", "Lone Star Title Co.", "real estate", ""),
-        ("npc3", 18.25, "Lunch", "Golden Noodle House", "food", ""),
-        ("npc3", 200.00, "Repaying loan", "", "", "npc2"),
-    ]
-    try:
-        for npc_id, amt, desc, merchant, cat, to in trail:
-            if npc_id in game.npcs and (not to or to in game.npcs):
-                nessie.record(game, npc_id, amt, desc, merchant, cat, to)
-    except Exception:
-        log.exception("Nessie money trail failed; continuing without bank data")
-        game.bank_enabled = False
-
-
-def offline_talk(game: Game, npc_id: str, message: str):
-    n = game.npcs[npc_id]
-    lines = [f"I'm the {n['role']}. {n['alibi']}",
-             "You hear that? The walls... they hum at night.",
-             f"Ask around about the {game.building.get('year_built', 'old')} renovation. People get quiet."]
-    if npc_id == game.culprit_id and sum(c["found"] for c in game.clues.values()) >= 2:
-        lines.append("Why are you looking at me like that? I was nowhere near that crawlspace.")
-    game.emit("say", npc_id=npc_id, text=lines[len(game.events) % len(lines)])
-
-
-def offline_hint(game: Game):
-    unfound = [c for c in game.clues.values() if not c["found"]]
-    if unfound:
-        room = room_by_id(game.layout, unfound[0]["room"])
-        game.emit("narrate", text=f"A cold draft pulls you toward the {room['name']} on floor {room['floor'] + 1}.")
-    else:
-        game.emit("narrate", text="You have every clue. Who benefits if this building looks haunted?")
+# --------------------------------------------------------------------------- rule-based director
+def rules_director(run: Run):
+    s = run.snapshot
+    if not s:
+        return
+    rnd = random.Random()
+    floor = s.get("floor", 0)
+    here = s.get("room")
+    alive = [g for g in run.ghosts.values() if g["alive"]]
+    on_floor = [g for g in alive if room_by_id(run.layout, g["room"])["floor"] == floor]
+    collected = sum(i["collected"] for i in run.items.values())
+    hp = s.get("hp", 100)
+    near = [r for r in run.layout["rooms"] if r["floor"] == floor and r["id"] != here]
+    acted = []
+    if not on_floor and near:
+        acted.append(run.spawn_ghost(rnd.choice(near)["id"], "wisp" if hp < 50 else rnd.choice(["wisp", "poltergeist"])))
+    elif hp > 60 and len(on_floor) < 3 and near:
+        acted.append(run.spawn_ghost(rnd.choice(near)["id"], "poltergeist"))
+    if collected >= 3 and not any(g["kind"] == "banshee" for g in run.ghosts.values()) and near:
+        acted.append(run.spawn_ghost(rnd.choice(near)["id"], "banshee"))
+        acted.append(run.taunt("You took what was mine. Now I take you."))
+    if alive and here and hp > 40:
+        g = rnd.choice(alive)
+        acted.append(run.send_ghost(g["id"], here))
+    if rnd.random() < 0.3:
+        acted.append(run.flicker(floor, 3))
+    if rnd.random() < 0.35 and run.taunts:
+        acted.append(run.taunt(rnd.choice(run.taunts)))
+    run.director_log.append("; ".join(acted) or "watching")

@@ -1,6 +1,5 @@
-"""The AI Game Master: a LangChain deepagent that reads the building's data,
-plans a mystery, places suspects and clues in real rooms, then reacts live
-to what the player does."""
+"""The AI Director: a LangChain deepagent that designs the haunting from the building's
+real data, then watches the player in real time and decides what the ghosts do next."""
 import json
 import logging
 import os
@@ -10,11 +9,11 @@ from langchain_anthropic import ChatAnthropic
 from langchain_core.tools import tool
 from langgraph.checkpoint.memory import MemorySaver
 
-from . import data_sources, nessie
-from .game import Game
+from . import data_sources
+from .game import GHOSTS, N_ITEMS, Run
 from .layout import room_by_id
 
-log = logging.getLogger("gm")
+log = logging.getLogger("director")
 MODEL = os.getenv("GM_MODEL", "claude-opus-5-5")
 _checkpointer = MemorySaver()
 
@@ -23,165 +22,129 @@ def llm_enabled() -> bool:
     return bool(os.getenv("ANTHROPIC_API_KEY"))
 
 
-SYSTEM_PROMPT = """You are the Game Master of "Haunted Listing", a 3D mystery game that
-takes place inside a real building. Your job has two phases.
+SETUP_PROMPT = f"""You are the AI Director of "Night Shift", a real-time first-person ghost hunt
+inside a real building. Study the building with get_building_record, get_aerial_view and
+list_rooms, plan with write_todos, then build the haunting from its REAL facts (year built,
+tenants, sales, history):
+- set_lore once: a title, a 2-3 sentence intro that cites the building's real history, and
+  6 short taunts (under 12 words each) the ghosts will whisper, rooted in that history.
+- place_item exactly {N_ITEMS} times: cursed objects tied to the building's past, spread over
+  every floor, never in the Stairwell or the entrance room {{exit_room}}. Best ones upstairs.
+- spawn_ghost one wisp per floor to start (kinds: {', '.join(GHOSTS)}).
+Act only through tools."""
 
-SETUP: Study the building with get_building_record, get_aerial_view and list_rooms.
-Write a short plan with write_todos first. Then build a mystery rooted in this building's
-real history, tenants, year built and last sale (a "haunting" that someone is faking, a
-lost deed, a sabotaged sale, and so on). Call set_story once, spawn exactly 3 or 4 suspects
-with spawn_npc, and place 4 to 6 clues with place_clue. Use the rooms on purpose: clues go
-where they make physical sense (blueprints in an archive, a fog machine near a vent), spread
-them across floors so the player has to explore, and keep each suspect away from the clue
-that incriminates them. Exactly one suspect is the culprit; every clue's points_to names the
-suspect id it implicates (red herrings may point at innocents, but at least 3 clues must point
-at the culprit). Keep text short and vivid: clue descriptions under 40 words.
-
-PLAY: You will get messages starting with PLAYER_. React like a living world:
-- PLAYER_TALK: answer in character with npc_say (1 to 3 sentences). Innocent suspects tell
-  the truth but hide their secret; the culprit lies, but slips if the player cites a found clue.
-- PLAYER_FOUND: narrate the discovery in one sentence. You may raise the stakes: move a
-  suspect with move_npc, or (at most twice per game) place a new clue.
-- PLAYER_HINT: nudge toward an unfound clue's room with narrate, without naming the culprit.
-- PLAYER_ACCUSE: narrate a dramatic 2-3 sentence ending matching the verdict you are given.
-- PLAYER_BANK: the player just pulled everyone's Capital One bank records. React in one
-  sentence with narrate, and consider having the culprit get nervous (move_npc).
-Always act through tools; your plain-text reply is ignored by the game."""
-
-BANK_PROMPT = """
-CAPITAL ONE BANKING IS ON. Every suspect has a real bank account (Capital One Nessie API).
-After spawning suspects, write the money trail with record_transaction (one call per
-transaction, 8 to 12 in total): 2 ordinary purchases per suspect (coffee, groceries, parking),
-2 or 3 purchases or transfers that quietly incriminate the culprit and fit the story (props
-for the haunting, a deposit, a payment to an accomplice), and 1 misleading one for an innocent
-suspect. Use believable merchant names and amounts. The player can read these statements at
-a bank terminal, so at least one clue should hint that "the money tells the story"."""
+TICK_PROMPT = """You are the AI Director of "Night Shift", a real-time ghost hunt. You get a live
+snapshot of the game every few seconds. Make it thrilling but fair, like a horror-game director:
+- Player comfortable (high hp, no ghost on their floor, collecting fast): add pressure. Spawn a
+  ghost in a room next to them, send a ghost to their room, or kill the lights on their floor.
+- Player struggling (hp under 40): ease off. At most one taunt, or send ghosts away.
+- After 3+ items are collected, release the banshee once.
+- Optionally use haunt_item to move an uncollected item the player is heading toward.
+Take 1 to 3 actions with tools, then stop. Keep taunts under 12 words. Act only through tools."""
 
 
-
-def _make_tools(game: Game):
+def _tools(run: Run, setup: bool):
     @tool
     def get_building_record() -> str:
-        """CoStar layer: the building's property record (type, year built, floors, tenants, sales, history)."""
-        b = {k: v for k, v in game.building.items() if k != "raw"}
-        return json.dumps(b)
+        """CoStar layer: the property record (type, year built, floors, tenants, sales, history)."""
+        return json.dumps({k: v for k, v in run.building.items() if k != "raw"})
 
     @tool
     def get_aerial_view() -> str:
-        """Vexcel layer: aerial imagery and surroundings for this address."""
-        url = data_sources.aerial_image_url(game.building)
-        return json.dumps({"image_url": url, "lat": game.building.get("lat"),
-                           "lng": game.building.get("lng"),
-                           "note": "Players fly in from this aerial view before entering."})
+        """Vexcel layer: aerial imagery for this address (the player flies in from it)."""
+        return json.dumps({"image_url": data_sources.aerial_image_url(run.building),
+                           "lat": run.building.get("lat"), "lng": run.building.get("lng")})
 
     @tool
     def list_rooms() -> str:
-        """Matterport / floor-plan layer: every room with id, name, floor and adjacent rooms."""
-        rooms = [{"id": r["id"], "name": r["name"], "floor": r["floor"] + 1,
-                  "neighbors": [room_by_id(game.layout, n)["name"] for n in r["neighbors"]]}
-                 for r in game.layout["rooms"]]
-        scan = data_sources.matterport_info(game.building)
-        return json.dumps({"rooms": rooms, "real_3d_scan": bool(scan)})
+        """Matterport / floor-plan layer: rooms with id, name, floor and adjacent rooms."""
+        return json.dumps([{"id": r["id"], "name": r["name"], "floor": r["floor"],
+                            "neighbors": r["neighbors"]} for r in run.layout["rooms"]])
 
     @tool
-    def set_story(title: str, intro: str, mystery: str, solution: str, culprit_npc_id: str) -> str:
-        """Set the mystery. intro: 2-3 sentences shown on arrival. mystery: the player's goal in one
-        sentence. solution: what really happened. culprit_npc_id: id returned by spawn_npc (e.g. npc2);
-        call this after spawning suspects."""
-        game.title, game.intro, game.mystery, game.solution = title, intro, mystery, solution
-        game.culprit_id = culprit_npc_id
-        return "Story set"
+    def set_lore(title: str, intro: str, taunts: list[str]) -> str:
+        """Set the run's title, intro and the ghosts' taunts."""
+        run.title, run.intro, run.taunts = title, intro, [t[:100] for t in taunts][:10]
+        return "Lore set"
 
     @tool
-    def spawn_npc(name: str, role: str, room_id: str, persona: str, secret: str, alibi: str) -> str:
-        """Place a suspect in a room. Returns the npc id."""
-        return game.spawn_npc(name, role, room_id, persona, secret, alibi)
+    def place_item(room_id: str, name: str, lore: str) -> str:
+        """Hide one cursed object in a room. lore: one sentence shown when picked up."""
+        if room_id == run.exit_room:
+            return "Not in the entrance room"
+        return run.place_item(room_id, name, lore)
 
     @tool
-    def place_clue(room_id: str, name: str, description: str, points_to: str) -> str:
-        """Hide a clue in a room. points_to is the npc id it implicates."""
-        out = game.place_clue(room_id, name, description, points_to)
-        if game.events:  # mid-game: tell the client a new clue appeared
-            game.emit("clue_added")
-        return out
+    def spawn_ghost(room_id: str, kind: str) -> str:
+        """Spawn a ghost (wisp | poltergeist | banshee) in a room."""
+        return run.spawn_ghost(room_id, kind)
 
     @tool
-    def move_npc(npc_id: str, room_id: str) -> str:
-        """Move a suspect to another room (they react to the player's progress)."""
-        return game.move_npc(npc_id, room_id)
+    def send_ghost(ghost_id: str, room_id: str) -> str:
+        """Send a living ghost to hunt in a room (any floor; ghosts phase through floors)."""
+        return run.send_ghost(ghost_id, room_id)
 
     @tool
-    def npc_say(npc_id: str, text: str) -> str:
-        """Speak as a suspect."""
-        if npc_id not in game.npcs:
-            return "Unknown npc"
-        game.emit("say", npc_id=npc_id, text=text)
-        return "said"
+    def kill_lights(floor: int, seconds: float) -> str:
+        """Black out a floor for 1-8 seconds."""
+        return run.flicker(floor, seconds)
 
     @tool
-    def narrate(text: str) -> str:
-        """Game-master narration shown to the player."""
-        game.emit("narrate", text=text)
-        return "narrated"
+    def taunt(text: str) -> str:
+        """Whisper a taunt on the player's screen."""
+        return run.taunt(text)
 
     @tool
-    def record_transaction(npc_id: str, amount_usd: float, description: str,
-                           merchant: str = "", category: str = "", to_npc_id: str = "") -> str:
-        """Capital One layer: write a real purchase (set merchant + category) or a transfer to
-        another suspect (set to_npc_id) on this suspect's bank account."""
-        try:
-            return nessie.record(game, npc_id, amount_usd, description, merchant, category, to_npc_id)
-        except Exception as e:  # report API errors back to the agent instead of crashing
-            return f"Bank error: {e}"
+    def haunt_item(item_id: str, room_id: str) -> str:
+        """Teleport an uncollected cursed object to another room."""
+        return run.haunt_item(item_id, room_id)
 
-    @tool
-    def pull_bank_records() -> str:
-        """Capital One layer: read every suspect's transactions live from the bank."""
-        try:
-            return json.dumps(nessie.statements(game))
-        except Exception as e:
-            return f"Bank error: {e}"
-
-    tools = [get_building_record, get_aerial_view, list_rooms, set_story, spawn_npc,
-             place_clue, move_npc, npc_say, narrate]
-    if game.bank_enabled:
-        tools += [record_transaction, pull_bank_records]
-    return tools
+    if setup:
+        return [get_building_record, get_aerial_view, list_rooms, set_lore, place_item, spawn_ghost]
+    return [list_rooms, spawn_ghost, send_ghost, kill_lights, taunt, haunt_item]
 
 
 def _model(effort: str):
-    return ChatAnthropic(
-        model=MODEL,
-        max_tokens=16000,
-        output_config={"effort": effort},
-        # Server-side fallback if a request is declined by a safety classifier.
-        betas=["server-side-fallback-2026-07-01"],
-        model_kwargs={"fallbacks": "default"},
-    )
+    return ChatAnthropic(model=MODEL, max_tokens=16000, output_config={"effort": effort},
+                         betas=["server-side-fallback-2026-07-01"],
+                         model_kwargs={"fallbacks": "default"})
 
 
-class GameMaster:
-    def __init__(self, game: Game):
-        self.game = game
-        tools = _make_tools(game)
-        prompt = SYSTEM_PROMPT + (BANK_PROMPT if game.bank_enabled else "")
-        self.setup_agent = create_deep_agent(model=_model("medium"), tools=tools,
-                                             system_prompt=prompt, checkpointer=_checkpointer)
-        self.play_agent = create_deep_agent(model=_model("low"), tools=tools,
-                                            system_prompt=prompt, checkpointer=_checkpointer)
-        self.cfg = {"configurable": {"thread_id": game.id}, "recursion_limit": 80}
-
-    def _run(self, agent, text: str):
-        agent.invoke({"messages": [{"role": "user", "content": text}]}, self.cfg)
+class Director:
+    def __init__(self, run: Run):
+        self.run = run
+        self.setup_agent = create_deep_agent(
+            model=_model("low"), tools=_tools(run, True),
+            system_prompt=SETUP_PROMPT.replace("{exit_room}", run.exit_room),
+            checkpointer=_checkpointer)
+        self.tick_agent = create_deep_agent(model=_model("low"), tools=_tools(run, False),
+                                            system_prompt=TICK_PROMPT)
+        self.ticks = 0
 
     def setup(self):
-        self._run(self.setup_agent, "Set up a new game for this building now.")
-        problems = self.game.ready()
-        if problems:
-            self._run(self.setup_agent, "The game is not ready: " + "; ".join(problems) + ". Fix it with the tools.")
-        if self.game.ready():
-            raise RuntimeError("GM setup incomplete: " + "; ".join(self.game.ready()))
-        self.game.emit("narrate", text=self.game.intro)
+        cfg = {"configurable": {"thread_id": f"{self.run.id}-setup"}, "recursion_limit": 80}
+        self.setup_agent.invoke({"messages": [{"role": "user", "content": "Design the haunting now."}]}, cfg)
+        if self.run.ready():
+            self.setup_agent.invoke({"messages": [{"role": "user", "content":
+                                     "Not ready: " + "; ".join(self.run.ready()) + ". Fix it."}]}, cfg)
+        if self.run.ready():
+            raise RuntimeError("Director setup incomplete: " + "; ".join(self.run.ready()))
 
-    def event(self, text: str):
-        self._run(self.play_agent, text)
+    def tick(self):
+        """One real-time decision. Fresh context each tick, with a short memory of past moves."""
+        self.ticks += 1
+        run, s = self.run, self.run.snapshot
+        alive = [{"id": g["id"], "kind": g["kind"], "room": g["room"],
+                  "floor": room_by_id(run.layout, g["room"])["floor"]}
+                 for g in run.ghosts.values() if g["alive"]]
+        uncollected = [{"id": i["id"], "room": i["room"]} for i in run.items.values() if not i["collected"]]
+        msg = json.dumps({
+            "player": s, "ghosts_alive": alive, "uncollected_items": uncollected,
+            "items_collected": sum(i["collected"] for i in run.items.values()),
+            "your_last_moves": run.director_log[-3:], "taunts_available": run.taunts,
+        })
+        before = len(run.commands)
+        self.tick_agent.invoke({"messages": [{"role": "user", "content": "SNAPSHOT " + msg}]},
+                               {"recursion_limit": 25})
+        acts = [c["kind"] for c in run.commands[before:]]
+        run.director_log.append(", ".join(acts) or "watching")

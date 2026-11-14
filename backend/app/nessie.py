@@ -1,5 +1,8 @@
-"""Capital One Nessie v2: every suspect gets a real (sandbox) bank account, and the
-money trail behind the mystery is written as real purchases and transfers.
+"""Capital One Nessie v2 as the game's real economy.
+
+At the start of a run we open two real sandbox accounts: the player's wallet and the
+"Bounty Office". Every ghost captured is a real transfer (bounty) into the wallet;
+every upgrade bought at the in-game ATM is a real purchase at a merchant.
 Docs: https://v2.nessieisreal.com (key from https://v2.nessieisreal.com/account)."""
 import logging
 import os
@@ -11,14 +14,20 @@ BASE = os.getenv("NESSIE_BASE", "https://v2-prod-api.nessieisreal.com")
 CITY_ADDR = {"Houston": ("TX", "77002"), "Los Angeles": ("CA", "90028")}
 
 
+class InsufficientFunds(Exception):
+    pass
+
+
 def enabled() -> bool:
     return bool(os.getenv("NESSIE_API_KEY"))
 
 
 def _req(method: str, path: str, **kw) -> dict:
-    r = httpx.request(method, BASE + path, timeout=20, **kw, headers={
+    r = httpx.request(method, BASE + path, timeout=15, **kw, headers={
         "Authorization": f"Bearer {os.getenv('NESSIE_API_KEY')}",
         "Content-Type": "application/json"})
+    if r.status_code == 422 and "insufficient" in r.text:
+        raise InsufficientFunds(r.text[:200])
     if r.status_code >= 400:
         raise RuntimeError(f"Nessie {method} {path} -> {r.status_code}: {r.text[:300]}")
     return r.json() if r.content else {}
@@ -30,69 +39,48 @@ def _address(building: dict) -> dict:
             "city": (building.get("city") or "Houston")[:80], "state": state, "zip": zip_code}
 
 
-def ensure_account(game, npc_id: str) -> str:
-    """Create the suspect's Nessie customer + checking account on first use."""
-    npc = game.npcs[npc_id]
-    if npc.get("account_id"):
-        return npc["account_id"]
-    first, _, last = npc["name"].partition(" ")
-    cust = _req("POST", "/customers", json={
-        "first_name": first[:80] or "Unknown", "last_name": (last or "Suspect")[:80],
-        "address": _address(game.building)})
-    acct = _req("POST", f"/customers/{cust['id']}/accounts", json={
-        "type": "Checking", "nickname": f"{npc['name']} checking"[:40],
-        "balance_cents": 5_000_000})
-    npc["customer_id"], npc["account_id"] = cust["id"], acct["id"]
-    return acct["id"]
+def _settle(tx: dict) -> dict:
+    """Settle right away so the balance updates in real time (else the sandbox sweep does it)."""
+    try:
+        return _req("POST", f"/transactions/{tx['id']}/settle") or tx
+    except Exception as e:
+        log.info("settle skipped: %s", e)
+        return tx
 
 
-def _merchant(game, name: str, category: str) -> str:
-    key = name.lower()
-    if key not in game.merchants:
-        body = {"name": name[:80], "category": (category or "general")[:40]}
-        if game.building.get("lat") is not None:
-            body["geocode"] = {"lat": game.building["lat"], "lng": game.building["lng"]}
-        game.merchants[key] = {"id": _req("POST", "/merchants", json=body)["id"], "name": name}
-    return game.merchants[key]["id"]
+def open_wallet(run, player_name: str = "Ghost Hunter"):
+    first, _, last = player_name.partition(" ")
+    addr = _address(run.building)
+    player = _req("POST", "/customers", json={"first_name": first[:80] or "Ghost",
+                                              "last_name": (last or "Hunter")[:80], "address": addr})
+    p_acct = _req("POST", f"/customers/{player['id']}/accounts", json={
+        "type": "Checking", "nickname": "Ghost hunter wallet", "balance_cents": 0})
+    office = _req("POST", "/customers", json={"first_name": "Bounty", "last_name": "Office", "address": addr})
+    o_acct = _req("POST", f"/customers/{office['id']}/accounts", json={
+        "type": "Checking", "nickname": "Ghost bounty fund", "balance_cents": 50_000_000})
+    merchant = _req("POST", "/merchants", json={"name": "Ghostbusting Supply Co.", "category": "equipment"})
+    run.wallet.update(live=True, player_account=p_acct["id"], bank_account=o_acct["id"],
+                      merchant=merchant["id"])
 
 
-def record(game, npc_id: str, amount_usd: float, description: str,
-           merchant: str = "", category: str = "", to_npc_id: str = "") -> str:
-    """Write one real Nessie purchase (to a merchant) or transfer (to another suspect)."""
-    if npc_id not in game.npcs:
-        return "Unknown npc"
-    cents = max(1, int(round(amount_usd * 100)))
-    payer = ensure_account(game, npc_id)
-    if to_npc_id:
-        if to_npc_id not in game.npcs:
-            return "Unknown payee npc"
-        payee = ensure_account(game, to_npc_id)
-        tx = _req("POST", f"/accounts/{payer}/transfers", json={
-            "payee_id": payee, "amount_cents": cents, "description": description[:200]})
-    else:
-        mid = _merchant(game, merchant or "Unknown merchant", category)
-        tx = _req("POST", f"/accounts/{payer}/purchases", json={
-            "merchant_id": mid, "amount_cents": cents, "description": description[:200]})
-    return f"Recorded {tx.get('kind', 'transaction')} {tx.get('id')} ({tx.get('status')})"
+def pay_bounty(run, cents: int, description: str) -> dict:
+    w = run.wallet
+    tx = _req("POST", f"/accounts/{w['bank_account']}/transfers", json={
+        "payee_id": w["player_account"], "amount_cents": cents, "description": description[:200]})
+    return _settle(tx)
 
 
-def statements(game) -> list[dict]:
-    """Pull every suspect's transactions live from Nessie."""
-    merchants = {m["id"]: m["name"] for m in game.merchants.values()}
-    accounts = {n["account_id"]: n["name"] for n in game.npcs.values() if n.get("account_id")}
-    out = []
-    for n in game.npcs.values():
-        rows = []
-        if n.get("account_id"):
-            items = _req("GET", f"/accounts/{n['account_id']}/transactions", params={"limit": 50})["items"]
-            for t in items:
-                incoming = t.get("payee_id") == n["account_id"]
-                other = merchants.get(t.get("merchant_id")) or accounts.get(
-                    t.get("payer_id") if incoming else t.get("payee_id")) or ""
-                rows.append({"kind": t.get("kind"), "status": t.get("status"),
-                             "amount": t.get("amount_cents", 0) / 100,
-                             "direction": "in" if incoming else "out",
-                             "counterparty": other, "description": t.get("description", ""),
-                             "date": t.get("created_at", "")[:10]})
-        out.append({"npc_id": n["id"], "name": n["name"], "role": n["role"], "transactions": rows})
-    return out
+def buy(run, cents: int, description: str) -> dict:
+    w = run.wallet
+    tx = _req("POST", f"/accounts/{w['player_account']}/purchases", json={
+        "merchant_id": w["merchant"], "amount_cents": cents, "description": description[:200]})
+    return _settle(tx)
+
+
+def balance(run) -> int | None:
+    try:
+        a = _req("GET", f"/accounts/{run.wallet['player_account']}")
+        return a.get("available_cents", a.get("balance_cents"))
+    except Exception as e:
+        log.info("balance unavailable: %s", e)
+        return None

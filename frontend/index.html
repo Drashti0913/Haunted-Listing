@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Haunted Listing</title>
+  <title>Haunted Listing: Night Shift</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Creepster&family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
@@ -17,83 +17,77 @@
 <body>
   <canvas id="scene"></canvas>
 
-  <!-- 1. Title + building picker -->
   <section id="title" class="screen">
     <h1>Haunted <span>Listing</span></h1>
-    <p class="tag">Every real building has a story. An AI game master turns it into a mystery you can walk through.</p>
-    <div id="gm-mode" class="pill"></div>
+    <div class="subtitle">NIGHT SHIFT</div>
+    <p class="tag">A real-time ghost hunt inside real buildings. An AI Director watches you play and decides what haunts you next.</p>
     <ul id="sponsors"></ul>
     <div id="buildings" class="cards"></div>
   </section>
 
-  <!-- 2. Loading while the GM agent builds the case -->
   <section id="loading" class="screen hidden">
     <div class="spinner"></div>
-    <p id="loading-line">The Game Master is reading the property record…</p>
+    <p id="loading-line">The AI Director is reading the property record…</p>
   </section>
 
-  <!-- 3. Case intro card after the fly-in -->
   <section id="intro" class="screen hidden">
     <div class="case">
-      <div class="case-label">CASE FILE · <span id="case-address"></span></div>
+      <div class="case-label">NIGHT SHIFT · <span id="case-address"></span></div>
       <h2 id="case-title"></h2>
       <p id="case-intro"></p>
-      <p class="goal" id="case-mystery"></p>
-      <div class="controls-help">WASD move · mouse look · <b>E</b> interact / stairs · <b>J</b> journal · <b>H</b> hint · Esc pause</div>
-      <button id="enter-btn" class="big">Enter the building</button>
+      <p class="goal">Collect the 5 cursed objects, then escape through the front door before dawn.</p>
+      <div class="controls-help">
+        <b>WASD</b> move · <b>Shift</b> sprint · <b>mouse</b> look ·
+        <b>hold click</b> or <b>Space</b> UV beam (captures ghosts) ·
+        <b>E</b> use / stairs up · <b>Q</b> stairs down
+      </div>
+      <p class="sub">Ghost bounties are paid into your Capital One account. Spend them at the ATM by the entrance.</p>
+      <button id="enter-btn" class="big">Start the shift</button>
       <button id="scan-btn" class="ghost hidden">View the real Matterport scan</button>
     </div>
   </section>
 
-  <!-- In-game HUD -->
   <div id="hud" class="hidden">
-    <div id="hud-top"><span id="hud-floor"></span><span id="hud-room"></span><span id="hud-clues"></span></div>
+    <div id="bars">
+      <div class="bar"><label>HEALTH</label><div><i id="hp-fill"></i></div></div>
+      <div class="bar uv"><label>UV BATTERY</label><div><i id="bat-fill"></i></div></div>
+    </div>
+    <div id="center-top"><span id="timer">5:00</span><span id="items-count">Objects 0/5</span><span id="floor-room"></span></div>
     <canvas id="minimap" width="180" height="140"></canvas>
+    <div id="wallet">
+      <div class="w-head"><b>Capital One</b> <span id="w-mode"></span></div>
+      <div id="w-balance">$0.00</div>
+      <div id="w-tx" class="sub"></div>
+    </div>
+    <div id="director"><span class="dot"></span><span id="d-text">AI Director watching</span></div>
+    <div id="taunt"></div>
     <div id="prompt" class="hidden"></div>
     <div id="log"></div>
     <div id="crosshair">+</div>
+    <div id="hurt"></div>
   </div>
 
-  <!-- Dialogue with a suspect -->
-  <div id="dialog" class="panel hidden">
-    <div class="panel-head"><b id="dlg-name"></b> <span id="dlg-role"></span><button class="x" data-close="dialog">✕</button></div>
-    <div id="dlg-lines"></div>
-    <form id="dlg-form"><input id="dlg-input" autocomplete="off" placeholder="Ask about the building, an alibi, a clue…"><button>Ask</button></form>
+  <div id="atm" class="panel hidden">
+    <div class="panel-head"><b>Capital One ATM</b> <span class="sub">real Nessie purchases</span><button class="x" data-close="atm">✕</button></div>
+    <div id="atm-balance"></div>
+    <div id="atm-items"></div>
+    <div id="atm-msg" class="sub"></div>
   </div>
 
-  <!-- Journal: clues + accuse -->
-  <div id="journal" class="panel hidden">
-    <div class="panel-head"><b>Journal</b><button class="x" data-close="journal">✕</button></div>
-    <h3>Clues</h3><ul id="j-clues"></ul>
-    <h3>Suspects</h3><ul id="j-suspects"></ul>
-    <button id="hint-btn" class="ghost">Ask the Game Master for a hint</button>
-  </div>
+  <section id="paused" class="screen hidden"><h2>Paused</h2><p>Click to keep hunting</p></section>
 
-  <!-- Capital One bank terminal -->
-  <div id="bank" class="panel hidden">
-    <div class="panel-head"><b>Bank records</b> <span class="sub">live from Capital One Nessie</span><button class="x" data-close="bank">✕</button></div>
-    <div id="bank-body"></div>
-  </div>
-
-  <!-- Paused -->
-  <section id="paused" class="screen hidden"><h2>Paused</h2><p>Click to keep exploring</p></section>
-
-  <!-- Ending -->
   <section id="ending" class="screen hidden">
     <div class="case">
       <h2 id="end-title"></h2>
       <p id="end-text"></p>
-      <button class="big" onclick="location.reload()">Play another building</button>
+      <button class="big" onclick="location.reload()">Take another shift</button>
     </div>
   </section>
 
-  <!-- Matterport real scan overlay -->
   <div id="scan" class="hidden">
     <iframe id="scan-frame" allow="xr-spatial-tracking; fullscreen"></iframe>
     <button class="x" data-close="scan">✕ Back</button>
   </div>
-
-  <div id="busy" class="hidden">The Game Master is thinking…</div>
   <script type="module" src="main.js"></script>
 </body>
 </html>
