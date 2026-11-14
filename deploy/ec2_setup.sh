@@ -5,6 +5,13 @@
 # Re-run it any time to pull the latest code from GitHub and restart the game.
 set -e
 
+if [ "$(uname)" != "Linux" ] || ! command -v dnf >/dev/null 2>&1; then
+  echo "STOP: this is your own computer, not the AWS server."
+  echo "Open AWS > EC2 > your instance > Connect > EC2 Instance Connect > Connect,"
+  echo "then paste this command into that BROWSER terminal (prompt: ec2-user@ip-...)."
+  exit 1
+fi
+
 echo "==> Installing Docker and git"
 sudo dnf install -y docker git >/dev/null
 sudo systemctl enable --now docker
