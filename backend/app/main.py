@@ -22,7 +22,7 @@ app = FastAPI(title="Haunted Listing: Night Shift")
 RUNS: dict[str, Run] = {}
 DIRECTORS: dict[str, Director] = {}
 FRONTEND = Path(__file__).resolve().parents[2] / "frontend"
-DIRECTOR_EVERY = 7.0     # seconds between director decisions
+DIRECTOR_EVERY = 14.0    # seconds between director decisions (free Gemini tier: ~10 requests/min)
 
 
 class NewRun(BaseModel):

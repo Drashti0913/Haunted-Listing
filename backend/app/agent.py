@@ -124,11 +124,16 @@ def _model(effort: str):
                           base_url=os.getenv("OLLAMA_URL", "http://localhost:11434"),
                           temperature=0.7, num_ctx=16384)
     if p == "gemini":      # free tier key from https://aistudio.google.com/apikey
-        from langchain_google_genai import ChatGoogleGenerativeAI
-        return ChatGoogleGenerativeAI(model=os.getenv("GEMINI_MODEL", "gemini-flash-latest"), temperature=0.7)
+        # Gemini's OpenAI-compatible endpoint (works with every Gemini key type, incl. "AQ." keys)
+        from langchain_openai import ChatOpenAI
+        name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash") if effort != "fast" else \
+            os.getenv("GEMINI_TICK_MODEL", "gemini-2.5-flash")
+        return ChatOpenAI(model=name,
+                          api_key=os.getenv("GOOGLE_API_KEY"), temperature=0.7, timeout=60, max_retries=2,
+                          base_url="https://generativelanguage.googleapis.com/v1beta/openai/")
     from langchain_anthropic import ChatAnthropic
     return ChatAnthropic(model=os.getenv("GM_MODEL", "claude-opus-5-5"), max_tokens=16000,
-                         output_config={"effort": effort},
+                         output_config={"effort": "low" if effort == "fast" else effort},
                          betas=["server-side-fallback-2026-07-01"],
                          model_kwargs={"fallbacks": "default"})
 
@@ -140,7 +145,7 @@ class Director:
             model=_model("low"), tools=_tools(run, True),
             system_prompt=SETUP_PROMPT.replace("{exit_room}", run.exit_room),
             checkpointer=_checkpointer)
-        self.tick_agent = create_deep_agent(model=_model("low"), tools=_tools(run, False),
+        self.tick_agent = create_deep_agent(model=_model("fast"), tools=_tools(run, False),
                                             system_prompt=TICK_PROMPT)
         self.ticks = 0
 
