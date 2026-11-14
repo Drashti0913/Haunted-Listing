@@ -122,6 +122,9 @@ async def _direct(run: Run):
 async def tick(rid: str, req: Tick):
     run = _run(rid)
     run.snapshot = req.snapshot
+    if run.wallet["live"] and time.time() - run.wallet["refreshed"] > 3:
+        run.wallet["refreshed"] = time.time()
+        await run_in_threadpool(nessie.refresh, run)
     if (run.status == "playing" and not run.director_busy
             and time.time() - run.last_director > DIRECTOR_EVERY):
         run.director_busy = True
@@ -153,10 +156,8 @@ async def capture(rid: str, req: Act):
             tx = await run_in_threadpool(nessie.pay_bounty, run, cents, f"Bounty: {g['kind']} {g['id']} captured")
             run.wallet["last_tx"] = {"id": tx.get("id"), "kind": "transfer", "status": tx.get("status"),
                                      "amount": cents}
-            bal = await run_in_threadpool(nessie.balance, run)
-            if bal is not None:
-                run.wallet["balance"] = bal
-                return run.public(req.since)
+            await run_in_threadpool(nessie.refresh, run)
+            return run.public(req.since)
         except Exception:
             log.exception("bounty transfer failed")
     run.wallet["balance"] = run.wallet["earned"] - run.wallet["spent"]
@@ -170,24 +171,21 @@ async def shop(rid: str, req: Act):
     if not item:
         raise HTTPException(400, "unknown item")
     price = item["price"]
-    if run.wallet["live"]:
+    w = run.wallet
+    if w["earned"] - w["spent"] < price:      # game rule: spend only what bounties earned
+        raise HTTPException(402, f"Not enough bounty: you have {(w['earned'] - w['spent']) / 100:.2f} USD. Capture more ghosts!")
+    if w["live"]:
         try:
             tx = await run_in_threadpool(nessie.buy, run, price, f"{item['name']} ({run.title})")
         except nessie.InsufficientFunds:
-            raise HTTPException(402, "Insufficient funds at Capital One. Capture more ghosts!")
+            raise HTTPException(402, "Capital One declined the card: credit limit reached.")
         except Exception as e:
             log.exception("purchase failed")
             raise HTTPException(502, f"Bank unavailable: {e}")
-        run.wallet["last_tx"] = {"id": tx.get("id"), "kind": "purchase", "status": tx.get("status"),
-                                 "amount": price}
-        run.wallet["spent"] += price
-        bal = await run_in_threadpool(nessie.balance, run)
-        run.wallet["balance"] = bal if bal is not None else run.wallet["earned"] - run.wallet["spent"]
-    else:
-        if run.wallet["earned"] - run.wallet["spent"] < price:
-            raise HTTPException(402, "Not enough bounty money. Capture more ghosts!")
-        run.wallet["spent"] += price
-        run.wallet["balance"] = run.wallet["earned"] - run.wallet["spent"]
+        w["last_tx"] = {"id": tx.get("id"), "kind": "card purchase", "status": tx.get("status"), "amount": price}
+    w["spent"] += price
+    if not w["live"]:
+        w["balance"] = w["earned"] - w["spent"]
     return {**run.public(req.since), "bought": req.item}
 
 

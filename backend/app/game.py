@@ -55,7 +55,7 @@ class Run:
         self.director_log: list[str] = []
         self.director_mode = "rules"
         # wallet (Capital One Nessie when configured, else local)
-        self.wallet = {"live": False, "earned": 0, "spent": 0, "balance": 0,
+        self.wallet = {"live": False, "earned": 0, "spent": 0, "balance": 0, "pending": 0, "refreshed": 0.0,
                        "player_account": None, "bank_account": None, "merchant": None, "last_tx": None}
         self.epilogue = ""
 
@@ -140,7 +140,7 @@ class Run:
     def wallet_view(self) -> dict:
         w = self.wallet
         return {"live": w["live"], "earned": w["earned"], "spent": w["spent"],
-                "balance": w["balance"], "last_tx": w["last_tx"]}
+                "balance": w["balance"], "pending": w["pending"], "last_tx": w["last_tx"]}
 
 
 # --------------------------------------------------------------------------- offline setup

@@ -19,8 +19,8 @@ Controls: **WASD** move · **Shift** sprint · **mouse** look · **hold click / 
 
 | Company | Tool | Live role in the game | Env var |
 |---|---|---|---|
-| LangChain | `deepagents` | **AI Director.** Designs the haunting from the building's real data (lore, taunts, where the cursed objects go), then every ~7 s reads a live snapshot (your floor, health, objects, nearby ghosts) and acts: spawns ghosts, sends hunters to your room, kills the lights, moves objects, taunts you. | `ANTHROPIC_API_KEY` |
-| Capital One | Nessie v2 API | **Real economy.** Each run opens a real wallet account and a Bounty Office account. Every capture is a real transfer; every upgrade at the in-game ATM is a real purchase. The bank declines what you can't afford. The HUD shows the live balance and the transaction id. | `NESSIE_API_KEY` |
+| LangChain | `deepagents` (model: Gemini free tier, Claude, or local Ollama) | **AI Director.** Designs the haunting from the building's real data (lore, taunts, where the cursed objects go), then every ~7 s reads a live snapshot (your floor, health, objects, nearby ghosts) and acts: spawns ghosts, sends hunters to your room, kills the lights, moves objects, taunts you. | `GOOGLE_API_KEY` (free) or `ANTHROPIC_API_KEY` |
+| Capital One | Nessie v2 API | **Real economy.** Each run opens a real checking account, a real Capital One credit card and a Bounty Office account. Every capture is a real transfer into checking (it settles in about a minute; the HUD shows it as settling). Every upgrade at the in-game ATM is a real card purchase, approved instantly. The HUD shows the live balance and the transaction ids. | `NESSIE_API_KEY` |
 | CoStar Group | Building data · Vexcel aerial · Matterport scans | **The level.** The property record drives the floors and the ghost story. Vexcel imagery is the ground in the fly-in. Matterport opens the real scan. | `COSTAR_*`, `VEXCEL_IMAGE_URL`, `MATTERPORT_SDK_KEY` |
 
 The title screen shows which tools are live (● LIVE / ○ off). Every tool has a fallback, so the game always runs:

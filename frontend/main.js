@@ -469,11 +469,12 @@ function taunt(text) {
   const el = $("taunt"); el.textContent = text; el.classList.add("on");
   clearTimeout(taunt.t); taunt.t = setTimeout(() => el.classList.remove("on"), 3200);
 }
-const walletCents = (w) => (w.live ? w.balance : w.earned - w.spent);
+const walletCents = (w) => w.earned - w.spent;   // bounty you can still spend
 function renderWallet(w) {
   $("w-mode").textContent = w.live ? "● LIVE Nessie" : "○ local (add NESSIE_API_KEY)";
   $("w-balance").textContent = money(walletCents(w));
-  $("w-tx").textContent = w.last_tx ? `${w.last_tx.kind} ${w.last_tx.id} · ${w.last_tx.status}` : "";
+  $("w-tx").textContent = (w.live ? `Checking ${money(w.balance)}` + (w.pending ? ` (+${money(w.pending)} settling)` : "") +
+    ` · Card spent ${money(w.spent)}` : "") + (w.last_tx ? ` · ${w.last_tx.kind} ${w.last_tx.id}` : "");
   $("atm-balance").textContent = money(walletCents(w));
   run.wallet = w;
 }
@@ -574,7 +575,7 @@ async function finish(result) {
   $("end-title").textContent = { escaped: "You Escaped", dead: "The Building Kept You", dawn: "Dawn Broke" }[result];
   try {
     const s = await api(`/api/runs/${run.id}/finish`, { result, stats: { captures: player.captures, collected: player.collected }, since });
-    $("end-text").textContent = s.epilogue + (s.wallet.live ? ` Real Capital One balance: ${money(s.wallet.balance)}.` : "");
+    $("end-text").textContent = s.epilogue + (s.wallet.live ? ` Capital One: ${money(s.wallet.earned)} in bounty transfers, ${money(s.wallet.spent)} charged to your card.` : "");
   } catch { $("end-text").textContent = ""; }
   setTimeout(() => show("ending"), 900);
 }

@@ -5,7 +5,6 @@ import logging
 import os
 
 from deepagents import create_deep_agent
-from langchain_anthropic import ChatAnthropic
 from langchain_core.tools import tool
 from langgraph.checkpoint.memory import MemorySaver
 
@@ -14,12 +13,25 @@ from .game import GHOSTS, N_ITEMS, Run
 from .layout import room_by_id
 
 log = logging.getLogger("director")
-MODEL = os.getenv("GM_MODEL", "claude-opus-5-5")
 _checkpointer = MemorySaver()
 
 
+def provider() -> str | None:
+    """Which model runs the Director. Free options first: local Ollama or Gemini's free tier."""
+    p = os.getenv("LLM_PROVIDER", "").lower()
+    if p:
+        return p
+    if os.getenv("ANTHROPIC_API_KEY"):
+        return "anthropic"
+    if os.getenv("GOOGLE_API_KEY"):
+        return "gemini"
+    if os.getenv("OLLAMA_MODEL"):
+        return "ollama"
+    return None
+
+
 def llm_enabled() -> bool:
-    return bool(os.getenv("ANTHROPIC_API_KEY"))
+    return provider() is not None
 
 
 SETUP_PROMPT = f"""You are the AI Director of "Night Shift", a real-time first-person ghost hunt
@@ -105,7 +117,18 @@ def _tools(run: Run, setup: bool):
 
 
 def _model(effort: str):
-    return ChatAnthropic(model=MODEL, max_tokens=16000, output_config={"effort": effort},
+    p = provider()
+    if p == "ollama":      # free, runs on this laptop
+        from langchain_ollama import ChatOllama
+        return ChatOllama(model=os.getenv("OLLAMA_MODEL", "mistral:7b-instruct-v0.3-q4_K_M"),
+                          base_url=os.getenv("OLLAMA_URL", "http://localhost:11434"),
+                          temperature=0.7, num_ctx=16384)
+    if p == "gemini":      # free tier key from https://aistudio.google.com/apikey
+        from langchain_google_genai import ChatGoogleGenerativeAI
+        return ChatGoogleGenerativeAI(model=os.getenv("GEMINI_MODEL", "gemini-flash-latest"), temperature=0.7)
+    from langchain_anthropic import ChatAnthropic
+    return ChatAnthropic(model=os.getenv("GM_MODEL", "claude-opus-5-5"), max_tokens=16000,
+                         output_config={"effort": effort},
                          betas=["server-side-fallback-2026-07-01"],
                          model_kwargs={"fallbacks": "default"})
 
