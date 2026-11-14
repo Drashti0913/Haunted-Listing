@@ -1,0 +1,40 @@
+#!/bin/bash
+# Free deploy on AWS: run this inside a fresh Amazon Linux 2023 EC2 instance
+# (EC2 > Instances > Connect > EC2 Instance Connect opens a browser terminal).
+#   curl -fsSL https://raw.githubusercontent.com/Drashti0913/Haunted-Listing/main/deploy/ec2_setup.sh | bash
+# Re-run it any time to pull the latest code from GitHub and restart the game.
+set -e
+
+echo "==> Installing Docker and git"
+sudo dnf install -y docker git >/dev/null
+sudo systemctl enable --now docker
+
+# Small free instances have 1 GB RAM; add swap so the Docker build doesn't run out of memory.
+if [ ! -f /swapfile ]; then
+  echo "==> Adding 2 GB swap"
+  sudo dd if=/dev/zero of=/swapfile bs=1M count=2048 status=none
+  sudo chmod 600 /swapfile && sudo mkswap /swapfile >/dev/null && sudo swapon /swapfile
+fi
+
+echo "==> Getting the code"
+cd ~
+[ -d Haunted-Listing ] || git clone -q https://github.com/Drashti0913/Haunted-Listing.git
+cd Haunted-Listing && git pull -q
+
+if [ ! -f .env ]; then
+  echo "==> Your keys (typing is hidden; they stay on this server only)"
+  read -rsp "Capital One NESSIE_API_KEY: " NESSIE < /dev/tty; echo
+  read -rsp "Gemini GOOGLE_API_KEY: " GOOGLE < /dev/tty; echo
+  printf "NESSIE_API_KEY=%s\nGOOGLE_API_KEY=%s\nGEMINI_MODEL=gemini-2.5-flash\n" "$NESSIE" "$GOOGLE" > .env
+  chmod 600 .env
+fi
+
+echo "==> Building and starting the game (first build takes a few minutes)"
+sudo docker build -q -t haunted-listing . >/dev/null
+sudo docker rm -f haunted-listing >/dev/null 2>&1 || true
+sudo docker run -d --name haunted-listing --restart unless-stopped \
+  --env-file .env -p 80:8080 haunted-listing >/dev/null
+
+sleep 5
+echo
+echo "Live at: http://$(curl -s https://checkip.amazonaws.com)"
