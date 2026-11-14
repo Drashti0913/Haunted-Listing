@@ -1,0 +1,9 @@
+fastapi==0.163.0
+uvicorn[standard]==0.54.0
+httpx==0.28.1
+python-dotenv==1.2.4
+deepagents==0.7.38
+langchain-anthropic==1.7.10
+langchain-core==1.8.0
+langgraph==1.2.22
+anthropic==2.8.0

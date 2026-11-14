@@ -1,0 +1,56 @@
+{
+  "_note": "SAMPLE buildings so the game runs before CoStar API keys are wired in. These are made up, not CoStar records. Replace or extend with real records via backend/app/data_sources.py.",
+  "buildings": [
+    {
+      "id": "sample-hou-office",
+      "name": "Bayou Exchange Tower (sample)",
+      "address": "Sample address, Downtown Houston, TX",
+      "city": "Houston",
+      "lat": 29.7589,
+      "lng": -95.3677,
+      "property_type": "office",
+      "year_built": 1974,
+      "floors": 3,
+      "rentable_sqft": 182000,
+      "tenants": ["Gulf Petroleum Analytics", "Harmon & Vale LLP", "Night Owl Coffee"],
+      "last_sale": {"year": 2019, "price_usd": 41000000},
+      "history": ["Built for an oil trading desk during the 1970s boom", "Vacant floors after the 1986 oil bust", "Renovated lobby in 2019"],
+      "matterport_model_id": null,
+      "aerial_image_url": null
+    },
+    {
+      "id": "sample-la-apartments",
+      "name": "Sunset Palms Apartments (sample)",
+      "address": "Sample address, Hollywood, Los Angeles, CA",
+      "city": "Los Angeles",
+      "lat": 34.0983,
+      "lng": -118.3267,
+      "property_type": "multifamily",
+      "year_built": 1928,
+      "floors": 3,
+      "rentable_sqft": 46000,
+      "tenants": ["24 residential units", "Corner laundromat"],
+      "last_sale": {"year": 2012, "price_usd": 9800000},
+      "history": ["Built as a bungalow court for studio workers", "Converted to apartments in 1951", "Seismic retrofit in 2016"],
+      "matterport_model_id": null,
+      "aerial_image_url": null
+    },
+    {
+      "id": "sample-la-retail",
+      "name": "Vermont Avenue Arcade (sample)",
+      "address": "Sample address, Koreatown, Los Angeles, CA",
+      "city": "Los Angeles",
+      "lat": 34.0617,
+      "lng": -118.2917,
+      "property_type": "retail",
+      "year_built": 1962,
+      "floors": 2,
+      "rentable_sqft": 24000,
+      "tenants": ["Pixel Palace Arcade", "Golden Noodle House", "Vermont Pawn & Loan"],
+      "last_sale": {"year": 2021, "price_usd": 7300000},
+      "history": ["Opened as a bowling alley", "Became a video arcade in 1981", "Sold to a developer in 2021"],
+      "matterport_model_id": null,
+      "aerial_image_url": null
+    }
+  ]
+}
