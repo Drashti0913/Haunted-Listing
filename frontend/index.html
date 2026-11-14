@@ -22,6 +22,7 @@
     <h1>Haunted <span>Listing</span></h1>
     <p class="tag">Every real building has a story. An AI game master turns it into a mystery you can walk through.</p>
     <div id="gm-mode" class="pill"></div>
+    <ul id="sponsors"></ul>
     <div id="buildings" class="cards"></div>
   </section>
 
@@ -66,6 +67,12 @@
     <h3>Clues</h3><ul id="j-clues"></ul>
     <h3>Suspects</h3><ul id="j-suspects"></ul>
     <button id="hint-btn" class="ghost">Ask the Game Master for a hint</button>
+  </div>
+
+  <!-- Capital One bank terminal -->
+  <div id="bank" class="panel hidden">
+    <div class="panel-head"><b>Bank records</b> <span class="sub">live from Capital One Nessie</span><button class="x" data-close="bank">✕</button></div>
+    <div id="bank-body"></div>
   </div>
 
   <!-- Paused -->

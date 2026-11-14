@@ -10,7 +10,7 @@ from fastapi.concurrency import run_in_threadpool  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 
-from . import data_sources  # noqa: E402
+from . import data_sources, nessie  # noqa: E402
 from .agent import GameMaster, llm_enabled  # noqa: E402
 from .game import Game, offline_hint, offline_setup, offline_talk  # noqa: E402
 
@@ -38,9 +38,20 @@ class Act(BaseModel):
     npc_id: str | None = None
 
 
+def integrations() -> dict:
+    """Which sponsor tools are live right now (shown on the title screen)."""
+    return {
+        "costar": bool(data_sources.COSTAR_API_BASE and data_sources.COSTAR_API_KEY),
+        "vexcel": bool(data_sources.VEXCEL_IMAGE_URL),
+        "matterport": bool(data_sources.MATTERPORT_SDK_KEY),
+        "deepagents": llm_enabled(),
+        "nessie": nessie.enabled(),
+    }
+
+
 @app.get("/api/health")
 def health():
-    return {"ok": True, "llm": llm_enabled()}
+    return {"ok": True, "llm": llm_enabled(), "integrations": integrations()}
 
 
 @app.get("/api/buildings")
@@ -51,7 +62,7 @@ def buildings():
                                             "year_built", "floors", "lat", "lng")},
                     "aerial_image_url": data_sources.aerial_image_url(b),
                     "has_scan": bool(data_sources.matterport_info(b))})
-    return {"buildings": out, "llm": llm_enabled()}
+    return {"buildings": out, "llm": llm_enabled(), "integrations": integrations()}
 
 
 def _game(gid: str) -> Game:
@@ -151,6 +162,25 @@ async def accuse(gid: str, req: Act):
     await _gm_event(game, f"PLAYER_ACCUSE {req.npc_id}. Verdict: {verdict}. Solution: {game.solution}",
                     lambda: game.emit("narrate", text=("Case closed! " if correct else "Wrong suspect. ") + game.solution))
     return game.public(req.since)
+
+
+@app.post("/api/games/{gid}/bank")
+async def bank(gid: str, req: Act):
+    """The in-game bank terminal: live Capital One Nessie statements for every suspect."""
+    game = _game(gid)
+    if not game.bank_enabled:
+        raise HTTPException(400, "Capital One banking is not configured")
+    try:
+        records = await run_in_threadpool(nessie.statements, game)
+    except Exception as e:
+        log.exception("Nessie statements failed")
+        raise HTTPException(502, f"Bank unavailable: {e}")
+    if not game.bank_viewed:
+        game.bank_viewed = True
+        game.emit("bank_viewed")
+        await _gm_event(game, "PLAYER_BANK: the player pulled everyone's bank records.",
+                        lambda: game.emit("narrate", text="The statements print out. Someone has been spending a lot on special effects…"))
+    return {"records": records, **game.public(req.since)}
 
 
 @app.get("/api/games/{gid}")

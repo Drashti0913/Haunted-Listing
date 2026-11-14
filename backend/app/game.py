@@ -1,9 +1,14 @@
 """Game state, what the player is allowed to see, and an offline game master
 used when no ANTHROPIC_API_KEY is set (so the demo never breaks)."""
+import logging
 import random
+import re
 import uuid
 
+from . import nessie
 from .layout import build_layout, room_by_id
+
+log = logging.getLogger("game")
 
 
 class Game:
@@ -21,6 +26,13 @@ class Game:
         self.events: list[dict] = []
         self.status = "playing"          # playing | won | lost
         self.hints_used = 0
+        # Capital One Nessie money trail
+        self.bank_enabled = nessie.enabled()
+        self.merchants: dict[str, dict] = {}
+        self.bank_viewed = False
+        offices = [r for r in self.layout["rooms"]
+                   if re.search(r"Office|Manager|Archive", r["name"])]
+        self.bank_room = (offices or self.layout["rooms"])[0]["id"]
 
     # --- mutations used by both the agent tools and the offline GM -------
     def emit(self, kind: str, **data):
@@ -77,6 +89,7 @@ class Game:
                        "description": c["description"] if c["found"] else None}
                       for c in self.clues.values()],
             "events": self.events[since:],
+            "bank": {"enabled": self.bank_enabled, "room": self.bank_room},
             "solution": self.solution if self.status != "playing" else None,
         }
 
@@ -114,7 +127,29 @@ def offline_setup(game: Game):
     game.place_clue(picks[5 % len(picks)]["id"], "Sale contract draft", f"A draft offer for the building. Whoever scares off the buyers gets it cheap. Signed: {c_name}.", culprit)
     game.place_clue(picks[6 % len(picks)]["id"], "Torn ghost costume", "A white sheet with a staff lanyard caught in the seam.", culprit)
     game.solution = f"{c_name} faked the haunting to drive the price down before buying the building."
+    if game.bank_enabled:
+        offline_money_trail(game)
     game.emit("narrate", text=game.intro)
+
+
+def offline_money_trail(game: Game):
+    """Real Nessie purchases/transfers for the offline GM's mystery."""
+    trail = [
+        ("npc1", 6.50, "Late-night coffee", "Night Owl Coffee", "food", ""),
+        ("npc1", 42.99, "Six white bedsheets", "Ace Hardware", "home", ""),     # red herring
+        ("npc2", 389.00, "Fog machine + remote, rush delivery", "Spectral FX Supply", "entertainment", ""),
+        ("npc2", 129.00, "Wireless hidden speaker", "Circuit Shack", "electronics", ""),
+        ("npc2", 25000.00, "Earnest money deposit for the building", "Lone Star Title Co.", "real estate", ""),
+        ("npc3", 18.25, "Lunch", "Golden Noodle House", "food", ""),
+        ("npc3", 200.00, "Repaying loan", "", "", "npc2"),
+    ]
+    try:
+        for npc_id, amt, desc, merchant, cat, to in trail:
+            if npc_id in game.npcs and (not to or to in game.npcs):
+                nessie.record(game, npc_id, amt, desc, merchant, cat, to)
+    except Exception:
+        log.exception("Nessie money trail failed; continuing without bank data")
+        game.bank_enabled = False
 
 
 def offline_talk(game: Game, npc_id: str, message: str):

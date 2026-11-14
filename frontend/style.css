@@ -79,3 +79,19 @@ button.x { border: 0; padding: 4px 8px; color: var(--muted); }
 #scan .x { position: absolute; top: 12px; left: 12px; background: var(--panel); color: var(--ink); }
 #paused h2 { font-family: Creepster, cursive; font-size: 56px; font-weight: 400; margin: 0; }
 #paused { cursor: pointer; }
+
+#sponsors { list-style: none; padding: 0; margin: 0 0 20px; display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; max-width: 760px; }
+#sponsors li { font-size: 12px; padding: 5px 10px; border-radius: 8px; background: var(--panel); border: 1px solid rgba(255,255,255,.08); color: var(--muted); }
+#sponsors li.on { border-color: var(--accent); color: var(--ink); }
+#sponsors li b { color: var(--accent); margin-right: 4px; }
+#sponsors li.off b { color: var(--muted); }
+.sub { color: var(--muted); font-size: 12px; }
+#bank { width: min(520px, calc(100% - 32px)); }
+#bank h4 { margin: 12px 0 4px; font-size: 14px; }
+#bank h4 span { color: var(--muted); font-weight: 400; }
+#bank table { width: 100%; border-collapse: collapse; font-size: 13px; }
+#bank td { padding: 4px 6px; border-bottom: 1px solid rgba(255,255,255,.06); vertical-align: top; }
+#bank td.amt { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+#bank td.out { color: var(--blood); }
+#bank td.in { color: var(--accent); }
+#bank .empty { color: var(--muted); font-size: 13px; }

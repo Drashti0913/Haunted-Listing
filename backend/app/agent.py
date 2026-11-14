@@ -10,7 +10,7 @@ from langchain_anthropic import ChatAnthropic
 from langchain_core.tools import tool
 from langgraph.checkpoint.memory import MemorySaver
 
-from . import data_sources
+from . import data_sources, nessie
 from .game import Game
 from .layout import room_by_id
 
@@ -44,7 +44,19 @@ PLAY: You will get messages starting with PLAYER_. React like a living world:
   suspect with move_npc, or (at most twice per game) place a new clue.
 - PLAYER_HINT: nudge toward an unfound clue's room with narrate, without naming the culprit.
 - PLAYER_ACCUSE: narrate a dramatic 2-3 sentence ending matching the verdict you are given.
+- PLAYER_BANK: the player just pulled everyone's Capital One bank records. React in one
+  sentence with narrate, and consider having the culprit get nervous (move_npc).
 Always act through tools; your plain-text reply is ignored by the game."""
+
+BANK_PROMPT = """
+CAPITAL ONE BANKING IS ON. Every suspect has a real bank account (Capital One Nessie API).
+After spawning suspects, write the money trail with record_transaction (one call per
+transaction, 8 to 12 in total): 2 ordinary purchases per suspect (coffee, groceries, parking),
+2 or 3 purchases or transfers that quietly incriminate the culprit and fit the story (props
+for the haunting, a deposit, a payment to an accomplice), and 1 misleading one for an innocent
+suspect. Use believable merchant names and amounts. The player can read these statements at
+a bank terminal, so at least one clue should hint that "the money tells the story"."""
+
 
 
 def _make_tools(game: Game):
@@ -112,8 +124,29 @@ def _make_tools(game: Game):
         game.emit("narrate", text=text)
         return "narrated"
 
-    return [get_building_record, get_aerial_view, list_rooms, set_story, spawn_npc,
-            place_clue, move_npc, npc_say, narrate]
+    @tool
+    def record_transaction(npc_id: str, amount_usd: float, description: str,
+                           merchant: str = "", category: str = "", to_npc_id: str = "") -> str:
+        """Capital One layer: write a real purchase (set merchant + category) or a transfer to
+        another suspect (set to_npc_id) on this suspect's bank account."""
+        try:
+            return nessie.record(game, npc_id, amount_usd, description, merchant, category, to_npc_id)
+        except Exception as e:  # report API errors back to the agent instead of crashing
+            return f"Bank error: {e}"
+
+    @tool
+    def pull_bank_records() -> str:
+        """Capital One layer: read every suspect's transactions live from the bank."""
+        try:
+            return json.dumps(nessie.statements(game))
+        except Exception as e:
+            return f"Bank error: {e}"
+
+    tools = [get_building_record, get_aerial_view, list_rooms, set_story, spawn_npc,
+             place_clue, move_npc, npc_say, narrate]
+    if game.bank_enabled:
+        tools += [record_transaction, pull_bank_records]
+    return tools
 
 
 def _model(effort: str):
@@ -131,12 +164,11 @@ class GameMaster:
     def __init__(self, game: Game):
         self.game = game
         tools = _make_tools(game)
+        prompt = SYSTEM_PROMPT + (BANK_PROMPT if game.bank_enabled else "")
         self.setup_agent = create_deep_agent(model=_model("medium"), tools=tools,
-                                             system_prompt=SYSTEM_PROMPT,
-                                             checkpointer=_checkpointer)
+                                             system_prompt=prompt, checkpointer=_checkpointer)
         self.play_agent = create_deep_agent(model=_model("low"), tools=tools,
-                                            system_prompt=SYSTEM_PROMPT,
-                                            checkpointer=_checkpointer)
+                                            system_prompt=prompt, checkpointer=_checkpointer)
         self.cfg = {"configurable": {"thread_id": game.id}, "recursion_limit": 80}
 
     def _run(self, agent, text: str):

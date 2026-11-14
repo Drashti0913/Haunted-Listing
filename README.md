@@ -2,7 +2,17 @@
 
 **Every real building has a story. An AI game master turns it into a 3D mystery you can walk through.**
 
-HackPrinceton Fall 2026 · Entertainment track · CoStar "AI for the Built World" · LangChain deepagents
+HackPrinceton Fall 2026 · Entertainment track · CoStar "AI for the Built World" · LangChain deepagents · Capital One Nessie
+
+## Company tools used (live, not mocked)
+
+| Company | Tool | What it does in the game | Env var |
+|---|---|---|---|
+| CoStar Group | Building data, Vexcel aerial imagery, Matterport 3D scans | Facts the mystery is built from, the fly-in view, the real interior | `COSTAR_*`, `VEXCEL_IMAGE_URL`, `MATTERPORT_SDK_KEY` |
+| LangChain | `deepagents` | The AI game master: plans, places suspects and clues, reacts live | `ANTHROPIC_API_KEY` |
+| Capital One | Nessie v2 API | Every suspect gets a real bank account; the GM writes the money trail as real purchases and transfers; a bank terminal in the building pulls statements live | `NESSIE_API_KEY` |
+
+The title screen shows which of these are live (● LIVE / ○ off).
 
 Pick a building in Houston or Los Angeles. You fly in from the aerial view (Vexcel layer)
 and walk its floors in first person (Matterport / floor-plan layer). A LangChain **deepagent**
@@ -59,7 +69,7 @@ frontend/ (Three.js)          backend/app/ (FastAPI)
                                 data_sources.py CoStar / Vexcel / Matterport adapters
 ```
 
-Game master tools: `get_building_record`, `get_aerial_view`, `list_rooms`, `set_story`, `spawn_npc`,
+Game master tools: `record_transaction` and `pull_bank_records` (Capital One), `get_building_record`, `get_aerial_view`, `list_rooms`, `set_story`, `spawn_npc`,
 `place_clue`, `move_npc`, `npc_say`, `narrate` (plus deepagents' built-in `write_todos` planning).
 The culprit and secrets stay on the server; the browser only sees what the player has discovered.
 

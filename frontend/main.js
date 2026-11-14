@@ -187,7 +187,25 @@ function buildInterior() {
     const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.08), new THREE.MeshBasicMaterial({ color: 0xffd9a0 }));
     bulb.position.copy(pl.position); g.add(bulb);
   }
+  if (game.bank.enabled) addBankTerminal();
   syncEntities();
+}
+
+let bankTerminal = null;
+function addBankTerminal() {
+  const p = roomCenter(game.bank.room, 7, 2.6);
+  const g = new THREE.Group();
+  const desk = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.8, 0.7), new THREE.MeshStandardMaterial({ color: 0x3a2a20 }));
+  desk.position.y = 0.4;
+  const screen = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.6, 0.06),
+    new THREE.MeshStandardMaterial({ color: 0x0b3d91, emissive: 0x1f6fff, emissiveIntensity: 1.2 }));
+  screen.position.set(0, 1.15, 0);
+  const tag = label("Capital One · bank records", { color: "#9cc3ff" }); tag.position.y = 1.8;
+  g.add(desk, screen, tag);
+  g.position.set(p.x, p.r.y, p.z);
+  g.lookAt(p.r.x + L.room_w / 2, p.r.y, p.r.z + L.room_d / 2);
+  g.userData = { floor: p.r.floor };
+  interior.add(g); bankTerminal = g;
 }
 
 function addWall(g, mat, px, pz, y, len, H, vertical, door) {
@@ -254,7 +272,7 @@ function syncEntities() {
 function setFloor(f) {
   currentFloor = f;
   floorGroups.forEach((g, i) => (g.visible = i === f));
-  for (const m of [...Object.values(npcMeshes), ...Object.values(clueMeshes)]) m.visible = m.userData.floor === f;
+  for (const m of [...Object.values(npcMeshes), ...Object.values(clueMeshes), bankTerminal].filter(Boolean)) m.visible = m.userData.floor === f;
   camera.position.y = f * L.floor_h + 1.6;
 }
 
@@ -288,7 +306,7 @@ addEventListener("keydown", (e) => {
 });
 addEventListener("keyup", (e) => (keys[e.code] = false));
 
-const panelsOpen = () => !$("dialog").classList.contains("hidden") || !$("journal").classList.contains("hidden") || !$("scan").classList.contains("hidden");
+const panelsOpen = () => ["dialog", "journal", "scan", "bank"].some((id) => !$(id).classList.contains("hidden"));
 // Fallback when pointer lock is unavailable (embedded browsers): drag to look.
 let noLock = false;
 document.addEventListener("pointerlockerror", () => { noLock = true; show("paused", false); });
@@ -338,6 +356,10 @@ function nearest() {
     const d = Math.hypot(m.position.x - p.x, m.position.z - p.z);
     if (d < bd) { bd = d; best = { kind: "clue", id: m.userData.id }; }
   }
+  if (bankTerminal && bankTerminal.userData.floor === currentFloor) {
+    const d = Math.hypot(bankTerminal.position.x - p.x, bankTerminal.position.z - p.z);
+    if (d < bd) { bd = d; best = { kind: "bank" }; }
+  }
   if (!best && roomAt(p.x, p.z)?.name === "Stairwell") best = { kind: "stairs" };
   return best;
 }
@@ -347,6 +369,7 @@ function interact(dir) {
   if (!t) return;
   if (t.kind === "npc") openDialog(t.id);
   if (t.kind === "clue") findClue(t.id);
+  if (t.kind === "bank") openBank();
   if (t.kind === "stairs") {
     const up = currentFloor + 1 < L.floors, down = currentFloor > 0;
     if (dir === "up" && up) setFloor(currentFloor + 1);
@@ -404,6 +427,39 @@ document.querySelectorAll("[data-close]").forEach((b) => b.addEventListener("cli
   if (id === "scan") $("scan-frame").src = "about:blank";
   if (mode === "play") controls.lock();
 }));
+
+async function openBank() {
+  openPanel("bank");
+  $("bank-body").innerHTML = '<p class="empty">Connecting to Capital One…</p>';
+  try {
+    const res = await api(`/api/games/${game.id}/bank`, { since });
+    renderBank(res.records);
+    const { records, ...state } = res;
+    handle(state);
+  } catch (err) { $("bank-body").innerHTML = ""; $("bank-body").textContent = "Bank unavailable: " + err.message; }
+}
+
+function renderBank(records) {
+  const body = $("bank-body"); body.innerHTML = "";
+  for (const r of records) {
+    const h = document.createElement("h4");
+    h.innerHTML = "<b></b> <span></span>";
+    h.querySelector("b").textContent = r.name; h.querySelector("span").textContent = r.role;
+    body.appendChild(h);
+    if (!r.transactions.length) { const p = document.createElement("p"); p.className = "empty"; p.textContent = "No activity"; body.appendChild(p); continue; }
+    const tbl = document.createElement("table");
+    for (const t of r.transactions) {
+      const tr = document.createElement("tr");
+      const sign = t.direction === "in" ? "+" : "−";
+      for (const [txt, cls] of [[t.counterparty || t.kind, ""], [t.description, ""],
+        [`${sign}$${t.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, `amt ${t.direction}`], [t.status, "sub"]]) {
+        const td = document.createElement("td"); td.textContent = txt; if (cls) td.className = cls; tr.appendChild(td);
+      }
+      tbl.appendChild(tr);
+    }
+    body.appendChild(tbl);
+  }
+}
 
 function openDialog(npcId) {
   dialogNpc = npcId;
@@ -482,6 +538,7 @@ function updateHud() {
   if (t.kind === "npc") p.textContent = `E · talk to ${game.npcs.find((n) => n.id === t.id)?.name}`;
   if (t.kind === "clue") p.textContent = "E · examine";
   if (t.kind === "stairs") p.textContent = `E · up   Q · down`;
+  if (t.kind === "bank") p.textContent = "E · pull bank records (Capital One)";
 }
 
 function drawMinimap() {
@@ -540,8 +597,21 @@ const LOADING_LINES = [
 ];
 
 async function loadBuildings() {
-  const { buildings, llm } = await api("/api/buildings");
+  const { buildings, llm, integrations: on } = await api("/api/buildings");
   $("gm-mode").textContent = llm ? "AI Game Master online" : "Offline Game Master (add ANTHROPIC_API_KEY for the AI)";
+  const tools = [
+    ["costar", "CoStar", "building data"], ["vexcel", "Vexcel", "aerial imagery"],
+    ["matterport", "Matterport", "3D scans"], ["deepagents", "LangChain", "deepagents game master"],
+    ["nessie", "Capital One", "Nessie bank accounts"],
+  ];
+  for (const [k, co, what] of tools) {
+    const li = document.createElement("li");
+    li.className = on[k] ? "on" : "off";
+    li.innerHTML = "<b></b><span></span>";
+    li.querySelector("b").textContent = on[k] ? "● LIVE" : "○ off";
+    li.querySelector("span").textContent = `${co} · ${what}`;
+    $("sponsors").appendChild(li);
+  }
   const box = $("buildings");
   for (const b of buildings) {
     const card = document.createElement("button");
