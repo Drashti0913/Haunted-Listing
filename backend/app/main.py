@@ -210,4 +210,13 @@ def get_run(rid: str, since: int = 0):
     return _run(rid).public(since)
 
 
+@app.middleware("http")
+async def no_stale_game_files(request, call_next):
+    """Always serve the latest game files, so players never run an old cached version."""
+    response = await call_next(request)
+    if not request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 app.mount("/", StaticFiles(directory=FRONTEND, html=True), name="frontend")

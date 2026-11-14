@@ -170,7 +170,15 @@ function buildInterior() {
     }
     const nm = label(r.name, { color: r.name === "Stairwell" ? "#7cf3c4" : "#e9e6f2" });
     nm.position.set(cx, y + H - 0.5, cz); g.add(nm);
-    if (r.name === "Stairwell") addStairs(g, cx, cz, y);
+    if (r.name === "Stairwell") {
+      addStairs(g, cx, cz, y);
+      const pad = new THREE.Mesh(new THREE.PlaneGeometry(W - 0.6, D - 0.6),
+        new THREE.MeshBasicMaterial({ color: 0x7cf3c4, transparent: true, opacity: 0.12 }));
+      pad.rotation.x = -Math.PI / 2; pad.position.set(cx, y + 0.02, cz); g.add(pad);
+      const sign = label(`STAIRS ↑↓  ·  E up  ·  Q down`, { color: "#7cf3c4", size: 64 });
+      sign.position.set(cx, y + 2.4, cz); g.add(sign);
+      const glow = new THREE.PointLight(0x7cf3c4, 4, 9, 1.4); glow.position.set(cx, y + 2.6, cz); g.add(glow);
+    }
     const pl = new THREE.PointLight(0xffc98a, 6, 14, 1.2);
     pl.position.set(cx, y + H - 0.4, cz); pl.userData = { seed: hash(r.id) % 100, floor: r.floor, base: 6 };
     g.add(pl); roomLights.push(pl);
@@ -359,8 +367,9 @@ addEventListener("keydown", (e) => {
   keys[e.code] = true;
   if (mode !== "play") return;
   if (e.code === "Space") { player.beam = true; e.preventDefault(); }
-  if (e.code === "KeyE") interact("up");
-  if (e.code === "KeyQ") interact("down");
+  const k = (e.key || "").toLowerCase();
+  if (e.code === "KeyE" || k === "e") interact("up");
+  if (e.code === "KeyQ" || k === "q") interact("down");
 });
 addEventListener("keyup", (e) => { keys[e.code] = false; if (e.code === "Space") player.beam = false; });
 let noLock = false, drag = null;
@@ -415,8 +424,14 @@ function interact(dir) {
     else taunt(`The door won't open. ${run.items.length - player.collected} objects left.`);
   }
   if (t.kind === "stairs") {
-    const up = currentFloor + 1 < L.floors, down = currentFloor > 0;
-    if (dir === "up" && up) setFloor(currentFloor + 1); else if (down) setFloor(currentFloor - 1); else if (up) setFloor(currentFloor + 1);
+    const up = currentFloor + 1 < L.floors, down = currentFloor > 0, from = currentFloor;
+    if (dir === "up" && up) setFloor(currentFloor + 1);
+    else if (dir === "down" && down) setFloor(currentFloor - 1);
+    else taunt(dir === "up" ? "Top floor. Press Q to go down." : "Ground floor. Press E to go up.");
+    if (currentFloor !== from) {
+      tone(currentFloor > from ? 440 : 330, 0.25, "triangle", 0.15, currentFloor > from ? 220 : -110);
+      taunt(`Floor ${currentFloor + 1} of ${L.floors}`);
+    }
   }
 }
 function pickupTick() {
@@ -549,7 +564,10 @@ function hudTick() {
   p.classList.toggle("hidden", !t);
   if (t?.kind === "atm") p.textContent = "E · Capital One ATM (buy upgrades)";
   if (t?.kind === "exit") p.textContent = player.collected >= run.items.length ? "E · ESCAPE" : "E · exit (locked)";
-  if (t?.kind === "stairs") p.textContent = "E · up   Q · down";
+  if (t?.kind === "stairs") {
+    const up = currentFloor + 1 < L.floors, down = currentFloor > 0;
+    p.textContent = [up && `E · go up to floor ${currentFloor + 2}`, down && `Q · go down to floor ${currentFloor}`].filter(Boolean).join("   ");
+  }
   if (tl <= 0) finish("dawn");
 }
 function drawMinimap() {
@@ -558,7 +576,15 @@ function drawMinimap() {
   const maxX = Math.max(...rooms.map((r) => r.x + L.room_w)), maxZ = Math.max(...rooms.map((r) => r.z + L.room_d));
   const s = Math.min((c.width - 20) / maxX, (c.height - 20) / maxZ), tx = (x) => 10 + x * s, tz = (z) => 10 + z * s;
   const dot = (x, z, col, rad = 3.5) => { ctx.fillStyle = col; ctx.beginPath(); ctx.arc(tx(x), tz(z), rad, 0, 7); ctx.fill(); };
-  for (const r of rooms) { ctx.strokeStyle = r.name === "Stairwell" ? "#7cf3c4" : "rgba(124,243,196,.4)"; ctx.strokeRect(tx(r.x), tz(r.z), L.room_w * s, L.room_d * s); }
+  for (const r of rooms) {
+    ctx.strokeStyle = r.name === "Stairwell" ? "#7cf3c4" : "rgba(124,243,196,.4)";
+    ctx.strokeRect(tx(r.x), tz(r.z), L.room_w * s, L.room_d * s);
+    if (r.name === "Stairwell") {
+      ctx.fillStyle = "rgba(124,243,196,.18)"; ctx.fillRect(tx(r.x), tz(r.z), L.room_w * s, L.room_d * s);
+      ctx.fillStyle = "#7cf3c4"; ctx.font = "bold 10px Inter, sans-serif"; ctx.textAlign = "center";
+      ctx.fillText("STAIRS", tx(r.x + L.room_w / 2), tz(r.z + L.room_d / 2) + 4); ctx.textAlign = "start";
+    }
+  }
   for (const m of Object.values(itemMeshes)) if (m.userData.floor === currentFloor) dot(m.position.x, m.position.z, "#c58cff");
   for (const g of ghosts.values()) if (g.floor === currentFloor && !g.dying) dot(g.mesh.position.x, g.mesh.position.z, "#ff4d6d", g.kind === "banshee" ? 5 : 3.5);
   if (currentFloor === 0 && atmMesh) dot(atmMesh.position.x, atmMesh.position.z, "#3d8bff");
@@ -650,6 +676,7 @@ $("enter-btn").addEventListener("click", () => {
   player.startedAt = performance.now(); mode = "play";
   controls.lock();
   logEntry("Find the 5 glowing cursed objects. Hold click or Space to fire your UV beam at ghosts.");
+  logEntry("Objects are on every floor: walk into the green STAIRS room (see minimap), press E to go up, Q to go down.");
 });
 
 // =====================================================================  main loop
