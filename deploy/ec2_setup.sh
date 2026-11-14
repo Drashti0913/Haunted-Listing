@@ -42,6 +42,25 @@ sudo docker rm -f haunted-listing >/dev/null 2>&1 || true
 sudo docker run -d --name haunted-listing --restart unless-stopped \
   --env-file .env -p 80:8080 haunted-listing >/dev/null
 
+echo "==> Turning on auto-update (checks GitHub every 2 minutes)"
+sudo tee /etc/systemd/system/haunted-update.service >/dev/null <<UNIT
+[Service]
+Type=oneshot
+User=root
+ExecStart=/bin/bash /home/ec2-user/Haunted-Listing/deploy/auto_update.sh
+UNIT
+sudo tee /etc/systemd/system/haunted-update.timer >/dev/null <<UNIT
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=2min
+[Install]
+WantedBy=timers.target
+UNIT
+sudo git config --global --add safe.directory /home/ec2-user/Haunted-Listing
+sudo systemctl daemon-reload
+sudo systemctl enable --now haunted-update.timer >/dev/null 2>&1
+
 sleep 5
 echo
 echo "Live at: http://$(curl -s https://checkip.amazonaws.com)"
+echo "Auto-update is on: new pushes to GitHub go live within about 5 minutes."
