@@ -125,8 +125,8 @@ class Run:
         b = self.building
         return {
             "id": self.id, "status": self.status, "title": self.title, "intro": self.intro,
-            "building": {k: b.get(k) for k in ("id", "name", "address", "city", "lat", "lng",
-                                                "property_type", "year_built", "floors", "history")},
+            "building": {k: b.get(k) for k in ("id", "name", "address", "city", "lat", "lng", "costar_type",
+                                                "property_type", "year_built", "floors", "history", "tenants")},
             "layout": self.layout, "exit_room": self.exit_room, "atm_room": self.atm_room,
             "time_limit": TIME_LIMIT, "ghost_types": GHOSTS, "shop": SHOP,
             "items": list(self.items.values()),
@@ -151,8 +151,9 @@ def offline_setup(run: Run):
     history = b.get("history") or ["Nobody remembers who built it"]
     name = b["name"].split("(")[0].strip()
     run.title = f"Night Shift at {name}"
-    run.intro = (f"Built in {year}. {history[0]}. {history[-1]}. Since then, the night crew stopped "
-                 f"coming back. Collect the {N_ITEMS} cursed objects and get out before dawn.")
+    facts = [h for h in history if not h.startswith("Built in")][:2]
+    run.intro = (f"Built in {year}. " + "".join(f"{h}. " for h in facts) + "Since then, the night crew "
+                 f"stopped coming back. Collect the {N_ITEMS} cursed objects and get out before dawn.")
     run.taunts = [f"This building was mine in {year}.", "You can't sell what belongs to the dead.",
                   "The lights are mine.", f"{history[0]}... and you walked right in.",
                   "Every floor remembers.", "Run faster."]

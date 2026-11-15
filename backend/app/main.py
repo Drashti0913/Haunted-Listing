@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import time
 from pathlib import Path
 
@@ -7,7 +8,7 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
-from fastapi import FastAPI, HTTPException  # noqa: E402
+from fastapi import FastAPI, HTTPException, Response  # noqa: E402
 from fastapi.concurrency import run_in_threadpool  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
@@ -22,7 +23,7 @@ app = FastAPI(title="Haunted Listing: Night Shift")
 RUNS: dict[str, Run] = {}
 DIRECTORS: dict[str, Director] = {}
 FRONTEND = Path(__file__).resolve().parents[2] / "frontend"
-DIRECTOR_EVERY = 14.0    # seconds between director decisions (free Gemini tier: ~10 requests/min)
+DIRECTOR_EVERY = 20.0    # seconds between AI decisions (Gemini free tier: per-minute and daily limits)
 
 
 class NewRun(BaseModel):
@@ -45,9 +46,9 @@ class Act(BaseModel):
 
 def integrations() -> dict:
     return {
-        "costar": bool(data_sources.COSTAR_API_BASE and data_sources.COSTAR_API_KEY),
-        "vexcel": bool(data_sources.VEXCEL_IMAGE_URL),
-        "matterport": bool(data_sources.MATTERPORT_SDK_KEY),
+        "costar": data_sources.costar_enabled(),
+        "vexcel": data_sources.vexcel_enabled(),
+        "matterport": bool(os.getenv("MATTERPORT_SDK_KEY")) and data_sources.costar_enabled(),
         "deepagents": llm_enabled(),
         "nessie": nessie.enabled(),
     }
@@ -60,10 +61,12 @@ def health():
 
 @app.get("/api/buildings")
 def buildings():
-    out = [{**{k: b.get(k) for k in ("id", "name", "address", "city", "property_type",
-                                     "year_built", "floors", "lat", "lng")},
+    out = [{**{k: b.get(k) for k in ("id", "name", "address", "city", "property_type", "costar_type",
+                                     "year_built", "floors", "lat", "lng", "tenant_count")},
+            "scanned_rooms": len(b.get("matterport_rooms") or []),
             "has_scan": bool(data_sources.matterport_info(b))}
            for b in data_sources.list_buildings()]
+    out.sort(key=lambda b: (b["city"] or "", b["year_built"] or 9999))
     return {"buildings": out, "integrations": integrations()}
 
 
@@ -205,6 +208,23 @@ async def finish(rid: str, req: Act):
         run.epilogue = (f"{lines[run.status]} Ghosts captured: {s.get('captures', 0)}. "
                         f"Bounty earned: ${run.wallet['earned'] / 100:,.2f}.")
     return run.public(req.since)
+
+
+@app.get("/api/aerial/{bid}.jpg")
+async def aerial(bid: str):
+    """Real Vexcel aerial photo around a building, fetched server-side (key stays private)."""
+    try:
+        b = data_sources.get_building(bid)
+    except KeyError:
+        raise HTTPException(404, "building not found")
+    if not data_sources.vexcel_enabled():
+        raise HTTPException(404, "Vexcel not configured")
+    try:
+        img = await run_in_threadpool(data_sources.vexcel_ortho, b)
+    except Exception as e:
+        log.exception("Vexcel ortho failed")
+        raise HTTPException(502, f"Vexcel unavailable: {e}")
+    return Response(img, media_type="image/jpeg", headers={"Cache-Control": "public, max-age=86400"})
 
 
 @app.get("/api/runs/{rid}")

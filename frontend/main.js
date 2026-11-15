@@ -99,12 +99,19 @@ function buildOutside(aerialUrl, building) {
   const groundMat = new THREE.MeshStandardMaterial({ color: 0x15161f, roughness: 1 });
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(800, 800), groundMat);
   ground.rotation.x = -Math.PI / 2; outside.add(ground);
-  if (aerialUrl) new THREE.TextureLoader().setCrossOrigin("anonymous").load(aerialUrl, (t) => {   // Vexcel
-    t.colorSpace = THREE.SRGBColorSpace; groundMat.map = t; groundMat.color.set(0xffffff); groundMat.needsUpdate = true; });
+  const AERIAL = 240;   // the Vexcel photo covers a 240 m square centered on the building
+  if (aerialUrl) {      // real Vexcel aerial photo, 1 unit = 1 m
+    const photoMat = new THREE.MeshBasicMaterial({ color: 0xb8bed0, fog: false });
+    const photo = new THREE.Mesh(new THREE.PlaneGeometry(AERIAL, AERIAL), photoMat);
+    photo.rotation.x = -Math.PI / 2; photo.position.y = 0.05; outside.add(photo);
+    new THREE.TextureLoader().load(aerialUrl, (t) => {
+      t.colorSpace = THREE.SRGBColorSpace; photoMat.map = t; photoMat.color.set(0xd8dcea); photoMat.needsUpdate = true; });
+  }
   const rnd = mulberry(building ? hash(building.id) : 7);
   const box = new THREE.BoxGeometry(1, 1, 1);
   for (let gx = -8; gx <= 8; gx++) for (let gz = -8; gz <= 8; gz++) {
     if ((Math.abs(gx) <= 1 && Math.abs(gz) <= 1) || gx % 3 === 0 || gz % 3 === 0) continue;
+    if (aerialUrl && Math.abs(gx * 26) < 140 && Math.abs(gz * 26) < 140) continue;   // don't cover the real photo
     const h = 6 + rnd() * (rnd() > 0.85 ? 90 : 30);
     const m = new THREE.Mesh(box, new THREE.MeshStandardMaterial({
       color: new THREE.Color().setHSL(0.65, 0.18, 0.14 + rnd() * 0.12), emissive: rnd() > 0.7 ? 0x22344a : 0x0b0d14 }));
@@ -112,7 +119,8 @@ function buildOutside(aerialUrl, building) {
   }
   const floors = building?.floors || 3;
   const target = new THREE.Mesh(new THREE.BoxGeometry(24, floors * 4, 16),
-    new THREE.MeshStandardMaterial({ color: 0x2a2f45, emissive: 0x145c45 }));
+    new THREE.MeshStandardMaterial({ color: 0x2a2f45, emissive: 0x145c45,
+      transparent: !!aerialUrl, opacity: aerialUrl ? 0.25 : 1 }));
   target.position.set(0, floors * 2, 0);
   target.add(new THREE.LineSegments(new THREE.EdgesGeometry(target.geometry), new THREE.LineBasicMaterial({ color: 0x7cf3c4 })));
   const beacon = new THREE.PointLight(0x7cf3c4, 400, 120, 1.5); beacon.position.set(0, floors * 4 + 10, 0);
@@ -120,7 +128,7 @@ function buildOutside(aerialUrl, building) {
 }
 function flyIn(done) {
   mode = "flyin"; const t0 = performance.now();
-  const from = new THREE.Vector3(160, 260, 220), to = new THREE.Vector3(0, 7, 34), look = new THREE.Vector3(0, 6, 0);
+  const from = new THREE.Vector3(160, 260, 220), to = new THREE.Vector3(0, 70, 95), look = new THREE.Vector3(0, 0, 0);
   const step = () => {
     const k = (performance.now() - t0) / 5000;
     camera.position.lerpVectors(from, to, ease(Math.min(k, 1))); camera.lookAt(look);
@@ -168,7 +176,8 @@ function buildInterior() {
       addWall(g, wallMat, dx === 0 ? cx : (dx < 0 ? r.x : r.x + W), dz === 0 ? cz : (dz < 0 ? r.z : r.z + D),
         y, vertical ? D : W, H, vertical, !!nb);
     }
-    const nm = label(r.name, { color: r.name === "Stairwell" ? "#7cf3c4" : "#e9e6f2" });
+    const nm = label(r.scanned ? `${r.name} · real scan` : r.name,
+      { color: r.name === "Stairwell" ? "#7cf3c4" : r.scanned ? "#ffd27a" : "#e9e6f2" });
     nm.position.set(cx, y + H - 0.5, cz); g.add(nm);
     if (r.name === "Stairwell") {
       addStairs(g, cx, cz, y);
@@ -632,7 +641,7 @@ const LOADING_LINES = ["The AI Director is reading the property record…", "Stu
 async function loadBuildings() {
   const { buildings, integrations: on } = await api("/api/buildings");
   const tools = [["costar", "CoStar", "building data"], ["vexcel", "Vexcel", "aerial imagery"],
-    ["matterport", "Matterport", "3D scans"], ["deepagents", "LangChain", "deepagents AI Director"],
+    ["matterport", "Matterport", "real 3D scans"], ["deepagents", "LangChain", "deepagents AI Director"],
     ["nessie", "Capital One", "Nessie bounty wallet"]];
   for (const [k, co, what] of tools) {
     const li = document.createElement("li"); li.className = on[k] ? "on" : "off";
@@ -645,8 +654,10 @@ async function loadBuildings() {
     const card = document.createElement("button"); card.className = "card";
     card.innerHTML = `<h3></h3><div class="meta"></div><span class="type"></span>`;
     card.querySelector("h3").textContent = b.name;
-    card.querySelector(".meta").textContent = `${b.address} · built ${b.year_built ?? "?"} · ${b.floors} floors`;
-    card.querySelector(".type").textContent = b.property_type + (b.has_scan ? " · real 3D scan" : "");
+    card.querySelector(".meta").textContent = `${b.address} · built ${b.year_built ?? "?"} · ${b.floors} floors` +
+      (b.tenant_count ? ` · ${b.tenant_count} past tenants` : "");
+    card.querySelector(".type").textContent = (b.costar_type || b.property_type) +
+      (b.scanned_rooms ? ` · Matterport scan, ${b.scanned_rooms} real rooms` : "");
     card.onclick = () => start(b);
     $("buildings").appendChild(card);
   }
@@ -666,6 +677,8 @@ async function start(b) {
       $("case-address").textContent = run.building.address;
       $("case-title").textContent = run.title;
       $("case-intro").textContent = run.intro;
+      const hist = (run.building.history || []).join(" · ");
+      $("case-record").textContent = hist ? `CoStar record: ${hist}` : "";
       show("scan-btn", !!run.matterport);
       show("intro");
     });

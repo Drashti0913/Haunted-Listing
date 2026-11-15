@@ -37,7 +37,8 @@ def llm_enabled() -> bool:
 SETUP_PROMPT = f"""You are the AI Director of "Night Shift", a real-time first-person ghost hunt
 inside a real building. Study the building with get_building_record, get_aerial_view and
 list_rooms, plan with write_todos, then build the haunting from its REAL facts (year built,
-tenants, sales, history):
+renovations, tenants over the years, sales, the CoStar research note, what the aerial survey
+sees). Name real details (the year, a real past tenant, a sale) so players recognize the place:
 - set_lore once: a title, a 2-3 sentence intro that cites the building's real history, and
   6 short taunts (under 12 words each) the ghosts will whisper, rooted in that history.
 - place_item exactly {N_ITEMS} times: cursed objects tied to the building's past, spread over
@@ -58,19 +59,23 @@ Take 1 to 3 actions with tools, then stop. Keep taunts under 12 words. Act only 
 def _tools(run: Run, setup: bool):
     @tool
     def get_building_record() -> str:
-        """CoStar layer: the property record (type, year built, floors, tenants, sales, history)."""
-        return json.dumps({k: v for k, v in run.building.items() if k != "raw"})
+        """CoStar layer: the real property record (type, year built, renovation, floors, size,
+        tenants over the years, sales history, CoStar research note)."""
+        skip = {"raw", "matterport_rooms", "matterport_models", "sales"}
+        return json.dumps({k: v for k, v in run.building.items() if k not in skip})
 
     @tool
     def get_aerial_view() -> str:
-        """Vexcel layer: aerial imagery for this address (the player flies in from it)."""
-        return json.dumps({"image_url": data_sources.aerial_image_url(run.building),
-                           "lat": run.building.get("lat"), "lng": run.building.get("lng")})
+        """Vexcel layer: what the aerial survey sees at this address (structures, footprint,
+        roof, tree cover, pool). The player flies in over this real aerial photo."""
+        return json.dumps({"lat": run.building.get("lat"), "lng": run.building.get("lng"),
+                           **data_sources.vexcel_property(run.building["id"])})
 
     @tool
     def list_rooms() -> str:
-        """Matterport / floor-plan layer: rooms with id, name, floor and adjacent rooms."""
-        return json.dumps([{"id": r["id"], "name": r["name"], "floor": r["floor"],
+        """Matterport layer: rooms with id, name, floor and adjacent rooms. scanned=true means
+        the room comes from the building's real Matterport 3D scan."""
+        return json.dumps([{"id": r["id"], "name": r["name"], "floor": r["floor"], "scanned": r.get("scanned"),
                             "neighbors": r["neighbors"]} for r in run.layout["rooms"]])
 
     @tool
@@ -129,7 +134,8 @@ def _model(effort: str):
         name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash") if effort != "fast" else \
             os.getenv("GEMINI_TICK_MODEL", "gemini-2.5-flash")
         return ChatOpenAI(model=name,
-                          api_key=os.getenv("GOOGLE_API_KEY"), temperature=0.7, timeout=60, max_retries=2,
+                          api_key=os.getenv("GOOGLE_API_KEY"), temperature=0.7, timeout=60,
+                          max_retries=4 if effort != "fast" else 1,   # setup waits out short 429s
                           base_url="https://generativelanguage.googleapis.com/v1beta/openai/")
     from langchain_anthropic import ChatAnthropic
     return ChatAnthropic(model=os.getenv("GM_MODEL", "claude-opus-5-5"), max_tokens=16000,
