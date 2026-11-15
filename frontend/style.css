@@ -126,3 +126,11 @@ button.x { border: 0; padding: 4px 8px; color: var(--muted); }
 .shop-item button { border-color: #1f6fff; color: #9cc3ff; white-space: nowrap; }
 .shop-item button:disabled { opacity: .4; cursor: default; }
 @media (max-width: 700px) { #center-top { top: 90px; } #wallet { display: none; } }
+
+#end-bank { margin: 14px 0; }
+.bank-title { font-size: 14px; color: #9cc3ff; margin: 0 0 6px; }
+#end-bank-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+#end-bank-table td { padding: 4px 6px; border-bottom: 1px solid rgba(255,255,255,.07); }
+#end-bank-table td.amt { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+#end-bank-table td.in { color: var(--accent); } #end-bank-table td.out { color: var(--blood); }
+#end-bank-table td.id { color: var(--muted); font-family: ui-monospace, monospace; font-size: 10px; }

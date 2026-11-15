@@ -624,6 +624,21 @@ async function finish(result) {
     $("end-text").textContent = s.epilogue + (s.wallet.live ? ` Capital One: ${money(s.wallet.earned)} in bounty transfers, ${money(s.wallet.spent)} charged to your card.` : "");
   } catch { $("end-text").textContent = ""; }
   setTimeout(() => show("ending"), 900);
+  try {   // the run's real bank activity, straight from Capital One
+    const st = await api(`/api/runs/${run.id}/statement`);
+    if (st.live && st.transactions.length) {
+      const tbl = $("end-bank-table"); tbl.innerHTML = "";
+      for (const t of st.transactions) {
+        const tr = document.createElement("tr"), incoming = t.to === "Your wallet";
+        for (const [txt, cls] of [[t.description, ""], [`${incoming ? "+" : "−"}$${t.amount.toFixed(2)}`, `amt ${incoming ? "in" : "out"}`],
+                                  [t.status, "id"], [t.id, "id"]]) {
+          const td = document.createElement("td"); td.textContent = txt; if (cls) td.className = cls; tr.appendChild(td);
+        }
+        tbl.appendChild(tr);
+      }
+      show("end-bank");
+    }
+  } catch (e) { console.warn("statement", e); }
 }
 
 // =====================================================================  Matterport real scan

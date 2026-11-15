@@ -99,3 +99,22 @@ def balance(run) -> int | None:
     except Exception as e:
         log.info("balance unavailable: %s", e)
         return None
+
+
+def run_statement(run) -> list[dict]:
+    """Real transactions of this run's wallet + card, newest first (for the end screen)."""
+    w, out = run.wallet, []
+    names = {w["player_account"]: "Your wallet", w.get("card_account"): "Your card",
+             w["bank_account"]: "Bounty Office", w.get("merchant"): "Ghostbusting Supply Co."}
+    for acct in (w["player_account"], w.get("card_account")):
+        if not acct:
+            continue
+        for t in _req("GET", f"/accounts/{acct}/transactions", params={"limit": 50})["items"]:
+            if t["id"] in {x["id"] for x in out}:
+                continue
+            out.append({"id": t["id"], "kind": t["kind"], "status": t["status"],
+                        "amount": t["amount_cents"] / 100, "description": t.get("description", ""),
+                        "from": names.get(t.get("payer_id"), "?"),
+                        "to": names.get(t.get("merchant_id")) or names.get(t.get("payee_id"), "?"),
+                        "time": t["created_at"]})
+    return sorted(out, key=lambda t: t["time"], reverse=True)

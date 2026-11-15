@@ -6,7 +6,7 @@
   <title>Haunted Listing: Night Shift</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Creepster&family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=3">
+  <link rel="stylesheet" href="style.css?v=4">
   <script type="importmap">
     { "imports": {
         "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
@@ -81,6 +81,10 @@
     <div class="case">
       <h2 id="end-title"></h2>
       <p id="end-text"></p>
+      <div id="end-bank" class="hidden">
+        <h3 class="bank-title">Capital One statement <span class="sub">live from the Nessie API</span></h3>
+        <table id="end-bank-table"></table>
+      </div>
       <button class="big" onclick="location.reload()">Take another shift</button>
     </div>
   </section>
@@ -89,6 +93,6 @@
     <iframe id="scan-frame" allow="xr-spatial-tracking; fullscreen"></iframe>
     <button class="x" data-close="scan">✕ Back</button>
   </div>
-  <script type="module" src="main.js?v=7"></script>
+  <script type="module" src="main.js?v=8"></script>
 </body>
 </html>

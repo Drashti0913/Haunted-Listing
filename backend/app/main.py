@@ -210,6 +210,19 @@ async def finish(rid: str, req: Act):
     return run.public(req.since)
 
 
+@app.get("/api/runs/{rid}/statement")
+async def statement(rid: str):
+    """This run's real Capital One Nessie transactions."""
+    run = _run(rid)
+    if not run.wallet["live"]:
+        return {"live": False, "transactions": []}
+    try:
+        txs = await run_in_threadpool(nessie.run_statement, run)
+    except Exception as e:
+        raise HTTPException(502, f"Bank unavailable: {e}")
+    return {"live": True, "transactions": txs}
+
+
 @app.get("/api/aerial/{bid}.jpg")
 async def aerial(bid: str):
     """Real Vexcel aerial photo around a building, fetched server-side (key stays private)."""
