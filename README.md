@@ -142,4 +142,4 @@ and it is locked to registered domains.
 
 ---
 
-Built at HackPrinceton Fall 2026 by Drashti Bhavsar and team.
+Built at HackPrinceton Fall 2026 by **Drashti Bhavsar, Hard Gondaliya, Akshat Mehta and Ghata Mehta** (team Haunted Listing).
