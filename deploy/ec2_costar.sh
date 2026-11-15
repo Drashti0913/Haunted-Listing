@@ -11,7 +11,7 @@ fi
 cd ~/Haunted-Listing
 git pull -q
 
-ask() { read -rsp "$1: " v < /dev/tty; echo >&2; echo "$v"; }
+ask() { local v=""; while [ -z "$v" ]; do read -rsp "$1: " v < /dev/tty; echo >&2; done; echo "  ...${v: -4}" >&2; echo "$v"; }
 set_env() { grep -v "^$1=" .env > .env.tmp || true; echo "$1=$2" >> .env.tmp; mv .env.tmp .env; chmod 600 .env; }
 
 echo "==> CoStar track keys (typing is hidden)"

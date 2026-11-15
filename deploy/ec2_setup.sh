@@ -30,8 +30,10 @@ cd Haunted-Listing && git pull -q
 
 if [ ! -f .env ]; then
   echo "==> Your keys (typing is hidden; they stay on this server only)"
-  read -rsp "Capital One NESSIE_API_KEY: " NESSIE < /dev/tty; echo
-  read -rsp "Gemini GOOGLE_API_KEY: " GOOGLE < /dev/tty; echo
+  NESSIE=""; GOOGLE=""
+  while [ -z "$NESSIE" ]; do read -rsp "Capital One NESSIE_API_KEY: " NESSIE < /dev/tty; echo; done
+  while [ -z "$GOOGLE" ]; do read -rsp "Gemini GOOGLE_API_KEY: " GOOGLE < /dev/tty; echo; done
+  echo "  got keys ending in ...${NESSIE: -4} and ...${GOOGLE: -4}"
   printf "NESSIE_API_KEY=%s\nGOOGLE_API_KEY=%s\nGEMINI_MODEL=gemini-2.5-flash\n" "$NESSIE" "$GOOGLE" > .env
   chmod 600 .env
 fi
