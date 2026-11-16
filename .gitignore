@@ -9,3 +9,6 @@ costar-kit/
 data/costar_buildings.json
 data/cache/
 linkedin/
+backend/Screenshot*
+*.pptx
+*.pdf
