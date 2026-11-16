@@ -134,3 +134,10 @@ button.x { border: 0; padding: 4px 8px; color: var(--muted); }
 #end-bank-table td.amt { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 #end-bank-table td.in { color: var(--accent); } #end-bank-table td.out { color: var(--blood); }
 #end-bank-table td.id { color: var(--muted); font-family: ui-monospace, monospace; font-size: 10px; }
+
+/* Tall screens (e.g. 20 building cards): start at the top and scroll, instead of
+   centering and pushing the heading off-screen. */
+.screen { justify-content: flex-start; }
+.screen > :first-child { margin-top: auto; }
+.screen > :last-child { margin-bottom: auto; }
+#title { padding-top: 48px; }
